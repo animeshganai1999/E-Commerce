@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef  } from "react";
 import { useDispatch } from "react-redux";
 import { addCart } from "../redux/action";
 
@@ -12,7 +12,7 @@ const Products = () => {
   const [data, setData] = useState([]);
   const [filter, setFilter] = useState(data);
   const [loading, setLoading] = useState(false);
-  let componentMounted = true;
+  let componentMounted = useRef(true); // ✅ Using useRef to track mount status
 
   const dispatch = useDispatch();
 
@@ -24,18 +24,19 @@ const Products = () => {
     const getProducts = async () => {
       setLoading(true);
       const response = await fetch("https://fakestoreapi.com/products/");
-      if (componentMounted) {
+      if (componentMounted.current) {
         setData(await response.clone().json());
         setFilter(await response.json());
         setLoading(false);
       }
 
-      return () => {
-        componentMounted = false;
-      };
     };
-
+    
     getProducts();
+
+    return () => {
+      componentMounted.current = false; // ✅ Cleanup function when unmounting
+    };
   }, []);
 
   const Loading = () => {
