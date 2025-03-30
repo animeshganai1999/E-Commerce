@@ -1,0 +1,12 @@
+{
+  "Version": 1,
+  "Hash": "VNVSdwHBz8o3ex58YBJsy2MFGKtwIAoFN35gK1uz9NQ=",
+  "Source": "ECommerceBackend.Domain",
+  "BasePath": "_content/ECommerceBackend.Domain",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": [],
+  "Endpoints": []
+}
