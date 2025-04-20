@@ -1,5 +1,4 @@
-﻿using ECommerceBackend.Application.Interfaces;
-using ECommerceBackend.Domain.Entities;
+﻿using ECommerceBackend.Domain.Entities;
 using ECommerceBackend.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,5 +17,6 @@ namespace ECommerceBackend.Infrastructure.Repositories
         {
             return await _context.CartItems.Where(c => c.UserId == userId).ToListAsync();
         }
+
     }
 }

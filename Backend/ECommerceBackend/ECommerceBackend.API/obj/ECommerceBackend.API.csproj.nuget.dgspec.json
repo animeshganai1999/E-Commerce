@@ -60,6 +60,14 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "dependencies": {
+            "AutoMapper": {
+              "target": "Package",
+              "version": "[14.0.0, )"
+            },
+            "Microsoft.AspNetCore.Authentication.JwtBearer": {
+              "target": "Package",
+              "version": "[8.0.14, )"
+            },
             "Microsoft.EntityFrameworkCore": {
               "target": "Package",
               "version": "[9.0.3, )"
@@ -77,6 +85,10 @@
             "Swashbuckle.AspNetCore": {
               "target": "Package",
               "version": "[6.6.2, )"
+            },
+            "System.IdentityModel.Tokens.Jwt": {
+              "target": "Package",
+              "version": "[8.7.0, )"
             }
           },
           "imports": [
@@ -98,7 +110,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.201/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.203/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
@@ -132,6 +144,9 @@
             "projectReferences": {
               "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Domain\\ECommerceBackend.Domain.csproj": {
                 "projectPath": "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Domain\\ECommerceBackend.Domain.csproj"
+              },
+              "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Infrastructure\\ECommerceBackend.Infrastructure.csproj": {
+                "projectPath": "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Infrastructure\\ECommerceBackend.Infrastructure.csproj"
               }
             }
           }
@@ -176,7 +191,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.201/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.203/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
@@ -250,7 +265,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.201/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.203/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
@@ -282,8 +297,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Application\\ECommerceBackend.Application.csproj": {
-                "projectPath": "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Application\\ECommerceBackend.Application.csproj"
+              "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Domain\\ECommerceBackend.Domain.csproj": {
+                "projectPath": "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Domain\\ECommerceBackend.Domain.csproj"
               }
             }
           }
@@ -340,7 +355,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.201/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.203/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

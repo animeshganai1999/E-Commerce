@@ -180,3 +180,6 @@ D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.API\ob
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.API\obj\Debug\net8.0\ECommerceBackend.API.pdb
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.API\obj\Debug\net8.0\ECommerceBackend.API.genruntimeconfig.cache
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.API\obj\Debug\net8.0\ref\ECommerceBackend.API.dll
+D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.API\bin\Debug\net8.0\AutoMapper.dll
+D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.API\bin\Debug\net8.0\Microsoft.AspNetCore.Authentication.JwtBearer.dll
+D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.API\bin\Debug\net8.0\Microsoft.Bcl.Memory.dll

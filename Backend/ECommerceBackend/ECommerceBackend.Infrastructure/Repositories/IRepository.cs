@@ -1,6 +1,6 @@
 ﻿using System.Linq.Expressions;
 
-namespace ECommerceBackend.Application.Interfaces
+namespace ECommerceBackend.Infrastructure.Repositories
 {
     public interface IRepository<T> where T : class
     {

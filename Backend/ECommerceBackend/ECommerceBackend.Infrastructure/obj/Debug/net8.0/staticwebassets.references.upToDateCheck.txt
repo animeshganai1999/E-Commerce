@@ -18,3 +18,5 @@ D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Applic
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Domain\obj\Debug\net8.0\staticwebassets.build.json
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Application\obj\Debug\net8.0\staticwebassets.build.json
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Domain\obj\Debug\net8.0\staticwebassets.build.json
+D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Domain\obj\Debug\net8.0\staticwebassets.build.json
+D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Domain\obj\Debug\net8.0\staticwebassets.build.json

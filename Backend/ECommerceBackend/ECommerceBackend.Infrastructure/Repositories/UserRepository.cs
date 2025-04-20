@@ -1,5 +1,4 @@
-﻿using ECommerceBackend.Application.Interfaces;
-using ECommerceBackend.Domain.Entities;
+﻿using ECommerceBackend.Domain.Entities;
 using ECommerceBackend.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 

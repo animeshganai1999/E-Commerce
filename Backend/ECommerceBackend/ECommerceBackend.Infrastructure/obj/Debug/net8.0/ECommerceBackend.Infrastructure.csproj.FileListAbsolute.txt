@@ -1,12 +1,9 @@
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\bin\Debug\net8.0\ECommerceBackend.Domain.staticwebassets.endpoints.json
-D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\bin\Debug\net8.0\ECommerceBackend.Application.staticwebassets.endpoints.json
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\bin\Debug\net8.0\ECommerceBackend.Infrastructure.staticwebassets.endpoints.json
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\bin\Debug\net8.0\ECommerceBackend.Infrastructure.deps.json
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\bin\Debug\net8.0\ECommerceBackend.Infrastructure.dll
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\bin\Debug\net8.0\ECommerceBackend.Infrastructure.pdb
-D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\bin\Debug\net8.0\ECommerceBackend.Application.dll
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\bin\Debug\net8.0\ECommerceBackend.Domain.dll
-D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\bin\Debug\net8.0\ECommerceBackend.Application.pdb
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\bin\Debug\net8.0\ECommerceBackend.Domain.pdb
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\obj\Debug\net8.0\ECommerceBackend.Infrastructure.csproj.AssemblyReference.cache
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Infrastructure\obj\Debug\net8.0\ECommerceBackend.Infrastructure.GeneratedMSBuildEditorConfig.editorconfig

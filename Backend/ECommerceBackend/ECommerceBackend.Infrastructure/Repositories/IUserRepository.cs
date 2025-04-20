@@ -1,6 +1,6 @@
 ﻿using ECommerceBackend.Domain.Entities;
 
-namespace ECommerceBackend.Application.Interfaces
+namespace ECommerceBackend.Infrastructure.Repositories
 {
     public interface IUserRepository : IRepository<User>
     {

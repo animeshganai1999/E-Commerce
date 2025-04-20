@@ -1098,23 +1098,6 @@
           }
         }
       },
-      "ECommerceBackend.Application/1.0.0": {
-        "type": "project",
-        "framework": ".NETCoreApp,Version=v8.0",
-        "dependencies": {
-          "ECommerceBackend.Domain": "1.0.0",
-          "Swashbuckle.AspNetCore": "6.6.2"
-        },
-        "compile": {
-          "bin/placeholder/ECommerceBackend.Application.dll": {}
-        },
-        "runtime": {
-          "bin/placeholder/ECommerceBackend.Application.dll": {}
-        },
-        "frameworkReferences": [
-          "Microsoft.AspNetCore.App"
-        ]
-      },
       "ECommerceBackend.Domain/1.0.0": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v8.0",
@@ -3269,11 +3252,6 @@
         "useSharedDesignerContext.txt"
       ]
     },
-    "ECommerceBackend.Application/1.0.0": {
-      "type": "project",
-      "path": "../ECommerceBackend.Application/ECommerceBackend.Application.csproj",
-      "msbuildProject": "../ECommerceBackend.Application/ECommerceBackend.Application.csproj"
-    },
     "ECommerceBackend.Domain/1.0.0": {
       "type": "project",
       "path": "../ECommerceBackend.Domain/ECommerceBackend.Domain.csproj",
@@ -3282,7 +3260,7 @@
   },
   "projectFileDependencyGroups": {
     "net8.0": [
-      "ECommerceBackend.Application >= 1.0.0",
+      "ECommerceBackend.Domain >= 1.0.0",
       "Microsoft.EntityFrameworkCore >= 9.0.3",
       "Microsoft.EntityFrameworkCore.Relational >= 9.0.3",
       "Microsoft.EntityFrameworkCore.SqlServer >= 9.0.3",
@@ -3321,8 +3299,8 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "projectReferences": {
-            "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Application\\ECommerceBackend.Application.csproj": {
-              "projectPath": "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Application\\ECommerceBackend.Application.csproj"
+            "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Domain\\ECommerceBackend.Domain.csproj": {
+              "projectPath": "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Domain\\ECommerceBackend.Domain.csproj"
             }
           }
         }
@@ -3379,7 +3357,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.201/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.203/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

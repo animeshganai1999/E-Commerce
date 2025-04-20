@@ -1,6 +1,6 @@
 {
   "Version": 1,
-  "Hash": "E1pXB2BaLTfj2UVB/pKF4jR8aWYsVQOSPuOOcENBmC0=",
+  "Hash": "slHDJL9D4Wia2MVoTL8jo07pUYclBr9y6EcAhl8AmNU=",
   "Source": "ECommerceBackend.Application",
   "BasePath": "_content/ECommerceBackend.Application",
   "Mode": "Default",
@@ -10,6 +10,17 @@
       "Identity": "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Domain\\ECommerceBackend.Domain.csproj",
       "Version": 2,
       "Source": "ECommerceBackend.Domain",
+      "GetPublishAssetsTargets": "ComputeReferencedStaticWebAssetsPublishManifest;GetCurrentProjectPublishStaticWebAssetItems",
+      "AdditionalPublishProperties": "Configuration=Debug;Platform=AnyCPU",
+      "AdditionalPublishPropertiesToRemove": "WebPublishProfileFile;TargetFramework;RuntimeIdentifier;SelfContained",
+      "GetBuildAssetsTargets": "GetCurrentProjectBuildStaticWebAssetItems",
+      "AdditionalBuildProperties": "Configuration=Debug;Platform=AnyCPU",
+      "AdditionalBuildPropertiesToRemove": "WebPublishProfileFile;TargetFramework;RuntimeIdentifier;SelfContained"
+    },
+    {
+      "Identity": "D:\\Personal\\Projects\\E-Commerce\\Backend\\ECommerceBackend\\ECommerceBackend.Infrastructure\\ECommerceBackend.Infrastructure.csproj",
+      "Version": 2,
+      "Source": "ECommerceBackend.Infrastructure",
       "GetPublishAssetsTargets": "ComputeReferencedStaticWebAssetsPublishManifest;GetCurrentProjectPublishStaticWebAssetItems",
       "AdditionalPublishProperties": "Configuration=Debug;Platform=AnyCPU",
       "AdditionalPublishPropertiesToRemove": "WebPublishProfileFile;TargetFramework;RuntimeIdentifier;SelfContained",

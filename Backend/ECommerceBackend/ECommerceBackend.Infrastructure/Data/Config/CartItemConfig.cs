@@ -11,6 +11,7 @@ namespace ECommerceBackend.Infrastructure.Data.Config
             builder.HasKey(ci => ci.Id); // Specify the primary key
             builder.Property(ci => ci.Id)
                 .ValueGeneratedOnAdd(); // Auto-increment the Id
+
             builder.Property(ci => ci.Quantity).IsRequired(); // Quantity is required
             builder.Property(ci => ci.UserId).IsRequired(); // UserId is required
             builder.Property(ci => ci.ProductId).IsRequired(); // ProductId is required

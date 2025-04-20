@@ -1,0 +1,34 @@
+[
+  {
+    "ContainingType": "ECommerceBackend.API.Controllers.CartController",
+    "Method": "GetCart",
+    "RelativePath": "api/Cart/getItems",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "userId",
+        "Type": "System.Int32",
+        "IsRequired": false
+      }
+    ],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "ECommerceBackend.API.Controllers.CartController",
+    "Method": "UpdateCart",
+    "RelativePath": "api/Cart/update",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "cartDiff",
+        "Type": "ECommerceBackend.Application.DTOs.CartDiffDTO",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": []
+  }
+]

@@ -1,5 +1,4 @@
-﻿using ECommerceBackend.Application.Interfaces;
-using ECommerceBackend.Infrastructure.Data;
+﻿using ECommerceBackend.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Linq.Expressions;
 
@@ -48,6 +47,18 @@ namespace ECommerceBackend.Infrastructure.Repositories
             }
 
             _dbSet.RemoveRange(entities);
+            await _dbContext.SaveChangesAsync();
+        }
+        public async Task AddRangeAsync(IEnumerable<T> entities)
+        {
+            await _dbSet.AddRangeAsync(entities);
+        }
+        public async Task<T?> GetAsync(Expression<Func<T, bool>> filter)
+        {
+            return await _dbSet.FirstOrDefaultAsync(filter);
+        }
+        public async Task SaveChangesAsync()
+        {
             await _dbContext.SaveChangesAsync();
         }
     }

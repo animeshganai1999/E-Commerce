@@ -27,3 +27,6 @@ D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Applic
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Application\obj\Debug\net8.0\refint\ECommerceBackend.Application.dll
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Application\obj\Debug\net8.0\ECommerceBackend.Application.pdb
 D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Application\obj\Debug\net8.0\ref\ECommerceBackend.Application.dll
+D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Application\bin\Debug\net8.0\ECommerceBackend.Infrastructure.staticwebassets.endpoints.json
+D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Application\bin\Debug\net8.0\ECommerceBackend.Infrastructure.dll
+D:\Personal\Projects\E-Commerce\Backend\ECommerceBackend\ECommerceBackend.Application\bin\Debug\net8.0\ECommerceBackend.Infrastructure.pdb
