@@ -9,7 +9,8 @@ namespace ECommerceBackend.API.Configuration
         public AutoMapperConfig()
         {
             CreateMap<User, UserDTO > ().ReverseMap(); // Mapping User to UserDTO and vice versa
-            CreateMap<CartItem, CartItemDTO>().ReverseMap(); // Mapping CartItem to CartItemDTO and vice versa
+            CreateMap<CartDiffDTO, CartItem>().ReverseMap();
+            CreateMap<CartItem, CartItemResponseDTO>();
         }
     }
 }

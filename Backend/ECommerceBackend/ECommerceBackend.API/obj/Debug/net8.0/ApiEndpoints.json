@@ -9,7 +9,7 @@
     "Parameters": [
       {
         "Name": "userId",
-        "Type": "System.Int32",
+        "Type": "System.Guid",
         "IsRequired": false
       }
     ],
@@ -26,6 +26,22 @@
       {
         "Name": "cartDiff",
         "Type": "ECommerceBackend.Application.DTOs.CartDiffDTO",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "ECommerceBackend.API.Controllers.EmailController",
+    "Method": "SendEmail",
+    "RelativePath": "api/Email/send",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "request",
+        "Type": "ECommerceBackend.Application.Models.ContactRequestModel",
         "IsRequired": true
       }
     ],

@@ -5,6 +5,7 @@ import '@fortawesome/fontawesome-free/css/all.min.css';
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Provider } from "react-redux";
 import store from "./redux/store";
+import CartSync from "./pages/CartSync";
 
 import {
   Home,
@@ -26,6 +27,7 @@ root.render(
   <BrowserRouter>
     <ScrollToTop>
       <Provider store={store}>
+        <CartSync /> {/* Syncs the cart with the server */}
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/product" element={<Products />} />

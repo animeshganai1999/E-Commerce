@@ -5,6 +5,7 @@ using ECommerceBackend.Domain.Entities;
 using ECommerceBackend.Infrastructure.Repositories;
 using ECommerceBackend.Application.DTOs;
 using ECommerceBackend.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 
 namespace ECommerceBackend.API.Controllers
 {
@@ -26,19 +27,21 @@ namespace ECommerceBackend.API.Controllers
         [HttpPost("update")]
         public async Task<IActionResult> UpdateCart([FromBody] CartDiffDTO cartDiff)
         {
+            Console.WriteLine($"Update : UserId: {cartDiff.UserId}");
             await _cartService.ApplyCartDiffAsync(cartDiff);
             return Ok();
         }
-
+        [Authorize]
         [HttpGet("getItems")]
-        public async Task<IActionResult> GetCart([FromQuery] int userId)
+        public async Task<IActionResult> GetCart([FromQuery] Guid userId)
         {
+            Console.WriteLine($"UserId: {userId}");
             var cartItems = await _cartService.GetCartByUserIdAsync(userId);
             if (cartItems == null || !cartItems.Any())
             {
                 return NotFound("No items found in the cart.");
             }
-            var cartItemsDTO = _mapper.Map<IEnumerable<CartItemDTO>>(cartItems);
+            var cartItemsDTO = _mapper.Map<IEnumerable<CartItemResponseDTO>>(cartItems);
             return Ok(cartItemsDTO);
         }
     }

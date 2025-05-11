@@ -2,7 +2,7 @@
 {
     public class CartDiffDTO
     {
-        public int UserId { get; set; }
+        public Guid UserId { get; set; }
         public List<CartItemDTO> Added { get; set; }
         public List<CartItemDTO> Updated { get; set; }
         public List<CartItemDTO> Removed { get; set; }

@@ -9,7 +9,7 @@ namespace ECommerceBackend.Domain.Entities
         [Required]
         public int Id { get; set; } // This is the primary key for the CartItem entity. (Auto-incremented)
         [Required]
-        public int UserId { get; set; } // This is a foreign key that references the User entity.
+        public Guid UserId { get; set; } // This is a foreign key that references the User entity.
         [Required]
         public required int ProductId { get; set; } // This is the ID of the product in the cart.
         [Required]

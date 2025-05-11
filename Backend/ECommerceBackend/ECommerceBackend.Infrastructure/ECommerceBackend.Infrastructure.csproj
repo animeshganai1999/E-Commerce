@@ -18,4 +18,8 @@
     <ProjectReference Include="..\ECommerceBackend.Domain\ECommerceBackend.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Migrations\" />
+  </ItemGroup>
+
 </Project>

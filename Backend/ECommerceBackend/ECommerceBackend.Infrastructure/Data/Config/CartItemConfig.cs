@@ -11,16 +11,17 @@ namespace ECommerceBackend.Infrastructure.Data.Config
             builder.HasKey(ci => ci.Id); // Specify the primary key
             builder.Property(ci => ci.Id)
                 .ValueGeneratedOnAdd(); // Auto-increment the Id
-
+            builder.Property(ci => ci.UserId)
+                .IsRequired()
+                .HasDefaultValueSql("NEWID()"); // Generate a new GUID for UserId by default
             builder.Property(ci => ci.Quantity).IsRequired(); // Quantity is required
-            builder.Property(ci => ci.UserId).IsRequired(); // UserId is required
             builder.Property(ci => ci.ProductId).IsRequired(); // ProductId is required
 
             // Some Seed Data [Need to delete]
             builder.HasData(new List<CartItem>()
             {
-                new() {Id = 1, UserId = 1, ProductId = 10, Quantity = 1},
-                new() {Id = 2, UserId = 1, ProductId = 11, Quantity = 2}
+                new() {Id = 1, UserId = Guid.Parse("3f2504e0-4f89-11d3-9a0c-0305e82c3301"), ProductId = 10, Quantity = 1},
+                new() {Id = 2, UserId = Guid.Parse("3f2504e0-4f89-11d3-9a0c-0305e82c3301"), ProductId = 11, Quantity = 2}
             });
 
             builder.HasOne<User>()

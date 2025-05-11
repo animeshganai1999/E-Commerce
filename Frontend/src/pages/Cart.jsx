@@ -35,11 +35,12 @@ const Cart = () => {
     let shipping = 30.0;
     let totalItems = 0;
     state.map((item) => {
-      return (subtotal += item.price * item.qty);
+      // console.log(item);
+      return (subtotal += item.price * item.Quantity);
     });
 
     state.map((item) => {
-      return (totalItems += item.qty);
+      return (totalItems += item.Quantity);
     });
     return (
       <>
@@ -93,7 +94,7 @@ const Cart = () => {
                                   <i className="fas fa-minus"></i>
                                 </button>
 
-                                <p className="mx-5">{item.qty}</p>
+                                <p className="mx-5">{item.Quantity}</p>
 
                                 <button
                                   className="btn px-3"
@@ -107,7 +108,7 @@ const Cart = () => {
 
                               <p className="text-start text-md-center">
                                 <strong>
-                                  <span className="text-muted">{item.qty}</span>{" "}
+                                  <span className="text-muted">{item.Quantity}</span>{" "}
                                   x ${item.price}
                                 </strong>
                               </p>

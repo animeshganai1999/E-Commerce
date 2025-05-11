@@ -13,3 +13,19 @@ export const delCart = (product) =>{
         payload:product
     }
 }
+
+// For Setting the Cart from DB
+export const setCart = (cartItems) => {
+    return {
+        type: "SETCART",
+        payload: cartItems
+    }
+}
+
+// For Setting the Auth from DB
+export const setAuth = (accessToken, userId) => {
+    return {
+        type: "SETAUTH",
+        payload: { accessToken, userId }
+    }
+}

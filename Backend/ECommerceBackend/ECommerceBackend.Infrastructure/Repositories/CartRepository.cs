@@ -13,7 +13,7 @@ namespace ECommerceBackend.Infrastructure.Repositories
         }
 
         // This method retrieves all cart items for a specific user by their user ID.
-        public async Task<IEnumerable<CartItem>> GetCartByUserIdAsync(int userId)
+        public async Task<IEnumerable<CartItem>> GetCartByUserIdAsync(Guid userId)
         {
             return await _context.CartItems.Where(c => c.UserId == userId).ToListAsync();
         }

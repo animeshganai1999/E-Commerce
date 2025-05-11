@@ -25,11 +25,11 @@ const Checkout = () => {
     let shipping = 30.0;
     let totalItems = 0;
     state.map((item) => {
-      return (subtotal += item.price * item.qty);
+      return (subtotal += item.price * item.Quantity);
     });
 
     state.map((item) => {
-      return (totalItems += item.qty);
+      return (totalItems += item.Quantity);
     });
     return (
       <>

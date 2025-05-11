@@ -6,12 +6,17 @@ namespace ECommerceBackend.Domain.Entities
     [Table("Users")]
     public class User
     {
+        [Key]
+        public Guid UserId { get; set; } // Primary key (GUID)
+
         [Required]
-        public int Id { get; set; } // This is the primary key for the User entity. (Auto-incremented)
+        public required string Name { get; set; }
+
         [Required]
         [EmailAddress]
-        public required string Email { get; set; } // This is the email address of the user. (Unique)
+        public required string Email { get; set; } // Email should be unique (add uniqueness in DB config)
+
         [Required]
-        public required string PasswordHash { get; set; } // This is the hashed password of the user.
+        public required string PasswordHash { get; set; }
     }
 }
