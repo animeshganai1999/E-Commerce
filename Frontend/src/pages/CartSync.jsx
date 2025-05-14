@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import axios from 'axios';
 import { setCart } from "../redux/action"; 
+import api from "../api"; 
 
 const getCartDiff = (localCart, serverCart) => {
   localStorage.removeItem("cart");
@@ -47,10 +48,8 @@ export default function CartSync() {
     console.log("Fetching cart from DB...");
     const fetchCart = async () => {
       try {
-        const cartResponse = await axios.get(`https://localhost:7244/api/cart/getItems?userId=${currentUserId}`,{
-          headers: {
-            Authorization: `Bearer ${AccessToken}`
-          }
+        const cartResponse = await api.get(`/cart/getItems?userId=${currentUserId}`, {
+          withCredentials: true
         });
         const cartItems = cartResponse.data;
   
