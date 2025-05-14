@@ -1,3 +1,0 @@
-﻿<Project>
-  <Import Project="..\buildMultiTargeting\ECommerceBackend.Domain.props" />
-</Project>
