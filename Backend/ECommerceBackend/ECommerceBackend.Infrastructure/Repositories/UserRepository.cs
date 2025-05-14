@@ -16,5 +16,9 @@ namespace ECommerceBackend.Infrastructure.Repositories
         {
             return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
         }
+        public async Task<User?> GetUserByUserIdAsync(Guid? userId)
+        {
+            return await _context.Users.FirstOrDefaultAsync(u => u.UserId == userId);
+        }
     }
 }

@@ -3,8 +3,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-#pragma warning disable CA1814 // Prefer jagged arrays over multidimensional
-
 namespace ECommerceBackend.Infrastructure.Migrations
 {
     /// <inheritdoc />
@@ -48,27 +46,39 @@ namespace ECommerceBackend.Infrastructure.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
-            migrationBuilder.InsertData(
-                table: "Users",
-                columns: new[] { "UserId", "Email", "Name", "PasswordHash" },
-                values: new object[,]
+            migrationBuilder.CreateTable(
+                name: "RefreshTokens",
+                columns: table => new
                 {
-                    { new Guid("3f2504e0-4f89-11d3-9a0c-0305e82c3301"), "animesh@gmail.com", "Animesh", "123456" },
-                    { new Guid("3f2504e0-4f89-11d3-9a0c-0305e82c3302"), "sayari@gmail.com", "Sayari", "123456" }
-                });
-
-            migrationBuilder.InsertData(
-                table: "CartItems",
-                columns: new[] { "Id", "ProductId", "Quantity", "UserId" },
-                values: new object[,]
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    UserId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    Token = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    ExpiryDate = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    IsRevoked = table.Column<bool>(type: "bit", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    RevokedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    ReplacedByToken = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    UserAgent = table.Column<string>(type: "nvarchar(max)", nullable: true)
+                },
+                constraints: table =>
                 {
-                    { 1, 10, 1, new Guid("3f2504e0-4f89-11d3-9a0c-0305e82c3301") },
-                    { 2, 11, 2, new Guid("3f2504e0-4f89-11d3-9a0c-0305e82c3301") }
+                    table.PrimaryKey("PK_RefreshTokens", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_RefreshTokens_Users_UserId",
+                        column: x => x.UserId,
+                        principalTable: "Users",
+                        principalColumn: "UserId",
+                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateIndex(
                 name: "IX_CartItems_UserId",
                 table: "CartItems",
+                column: "UserId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_RefreshTokens_UserId",
+                table: "RefreshTokens",
                 column: "UserId");
         }
 
@@ -77,6 +87,9 @@ namespace ECommerceBackend.Infrastructure.Migrations
         {
             migrationBuilder.DropTable(
                 name: "CartItems");
+
+            migrationBuilder.DropTable(
+                name: "RefreshTokens");
 
             migrationBuilder.DropTable(
                 name: "Users");

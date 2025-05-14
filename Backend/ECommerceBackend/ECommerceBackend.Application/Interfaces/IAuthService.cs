@@ -7,7 +7,8 @@ namespace ECommerceBackend.Application.Interfaces
 {
     public interface IAuthService
     {
-        Task<AuthResponse> AuthenticateAsync(LoginModel request);
-        Task<AuthResponse> RegisterAsync(RegisterModel model);
+        Task<AuthResponse> AuthenticateAsync(LoginModel request, string userAgent);
+        Task<AuthResponse> RefreshTokenAsync(string refreshToken, string? userAgent);
+        Task<AuthResponse> RegisterAsync(RegisterModel model, string userAgent);
     }
 }

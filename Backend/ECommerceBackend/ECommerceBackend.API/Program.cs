@@ -1,4 +1,4 @@
-using ECommerceBackend.Application.Interfaces;
+﻿using ECommerceBackend.Application.Interfaces;
 using ECommerceBackend.Application.Services;
 
 //using ECommerceBackend.Application.Services;
@@ -26,6 +26,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<ICartRepository, CartRepository>();
+builder.Services.AddScoped<ITokenRepository, TokenRepository>();
 
 // Register services
 builder.Services.AddTransient<ICartService, CartService>();
@@ -52,6 +53,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
             // Key used for signing the JWT token
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("this_is_a_very_long_secret_key@2025!!"))  // Use your secret key here
+            //ClockSkew = TimeSpan.Zero
         };
     });
 

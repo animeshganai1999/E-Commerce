@@ -18,11 +18,11 @@ namespace ECommerceBackend.Infrastructure.Data.Config
             builder.Property(ci => ci.ProductId).IsRequired(); // ProductId is required
 
             // Some Seed Data [Need to delete]
-            builder.HasData(new List<CartItem>()
-            {
-                new() {Id = 1, UserId = Guid.Parse("3f2504e0-4f89-11d3-9a0c-0305e82c3301"), ProductId = 10, Quantity = 1},
-                new() {Id = 2, UserId = Guid.Parse("3f2504e0-4f89-11d3-9a0c-0305e82c3301"), ProductId = 11, Quantity = 2}
-            });
+            //builder.HasData(new List<CartItem>()
+            //{
+            //    new() {Id = 1, UserId = Guid.Parse("3f2504e0-4f89-11d3-9a0c-0305e82c3301"), ProductId = 10, Quantity = 1},
+            //    new() {Id = 2, UserId = Guid.Parse("3f2504e0-4f89-11d3-9a0c-0305e82c3301"), ProductId = 11, Quantity = 2}
+            //});
 
             builder.HasOne<User>()
                 .WithMany()

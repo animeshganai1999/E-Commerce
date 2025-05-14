@@ -35,7 +35,9 @@ namespace ECommerceBackend.API.Controllers
         [HttpGet("getItems")]
         public async Task<IActionResult> GetCart([FromQuery] Guid userId)
         {
-            Console.WriteLine($"UserId: {userId}");
+            string? userAgent = HttpContext.Request.Headers.UserAgent; // Allow nullability
+            var refreshToken = Request.Cookies["refreshToken"];
+            //Console.WriteLine($"RefreshToken: {refreshToken}");
             var cartItems = await _cartService.GetCartByUserIdAsync(userId);
             if (cartItems == null || !cartItems.Any())
             {

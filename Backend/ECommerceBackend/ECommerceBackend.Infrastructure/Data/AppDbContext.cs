@@ -12,11 +12,12 @@ namespace ECommerceBackend.Infrastructure.Data
         // DbSets for your entities
         public DbSet<User> Users { get; set; } // Create a context file for User model
         public DbSet<CartItem> CartItems { get; set; } // Create a context file for CartItem model
-
+        public DbSet<RefreshToken> RefreshTokens { get; set; } // Create a context file for RefreshToken model
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.ApplyConfiguration(new UserConfig());
             modelBuilder.ApplyConfiguration(new CartItemConfig());
+            modelBuilder.ApplyConfiguration(new RefreshTokenConfig());
             base.OnModelCreating(modelBuilder);
         }
     }

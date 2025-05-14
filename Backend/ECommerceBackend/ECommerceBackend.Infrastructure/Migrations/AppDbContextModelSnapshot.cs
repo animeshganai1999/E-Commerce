@@ -46,22 +46,44 @@ namespace ECommerceBackend.Infrastructure.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("CartItems");
+                });
 
-                    b.HasData(
-                        new
-                        {
-                            Id = 1,
-                            ProductId = 10,
-                            Quantity = 1,
-                            UserId = new Guid("3f2504e0-4f89-11d3-9a0c-0305e82c3301")
-                        },
-                        new
-                        {
-                            Id = 2,
-                            ProductId = 11,
-                            Quantity = 2,
-                            UserId = new Guid("3f2504e0-4f89-11d3-9a0c-0305e82c3301")
-                        });
+            modelBuilder.Entity("ECommerceBackend.Domain.Entities.RefreshToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiryDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsRevoked")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("ReplacedByToken")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("UserAgent")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("RefreshTokens");
                 });
 
             modelBuilder.Entity("ECommerceBackend.Domain.Entities.User", b =>
@@ -86,22 +108,6 @@ namespace ECommerceBackend.Infrastructure.Migrations
                     b.HasKey("UserId");
 
                     b.ToTable("Users");
-
-                    b.HasData(
-                        new
-                        {
-                            UserId = new Guid("3f2504e0-4f89-11d3-9a0c-0305e82c3301"),
-                            Email = "animesh@gmail.com",
-                            Name = "Animesh",
-                            PasswordHash = "123456"
-                        },
-                        new
-                        {
-                            UserId = new Guid("3f2504e0-4f89-11d3-9a0c-0305e82c3302"),
-                            Email = "sayari@gmail.com",
-                            Name = "Sayari",
-                            PasswordHash = "123456"
-                        });
                 });
 
             modelBuilder.Entity("ECommerceBackend.Domain.Entities.CartItem", b =>
@@ -112,6 +118,16 @@ namespace ECommerceBackend.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("FK_Users_CartItems");
+                });
+
+            modelBuilder.Entity("ECommerceBackend.Domain.Entities.RefreshToken", b =>
+                {
+                    b.HasOne("ECommerceBackend.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_RefreshTokens_Users_UserId");
                 });
 #pragma warning restore 612, 618
         }

@@ -24,11 +24,12 @@ namespace ECommerceBackend.API.Controllers
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginModel model)
         {
+            string? userAgent = HttpContext.Request.Headers.UserAgent;
             try
             {
-                var authResponse = await _authService.AuthenticateAsync(model);
+                var authResponse = await _authService.AuthenticateAsync(model, userAgent);
                 SetRefreshTokenInCookie(authResponse.RefreshToken);
-
+                //Console.WriteLine($"RefreshToken: {authResponse.RefreshToken}");
                 return Ok(new
                 {
                     authResponse.AccessToken,
@@ -44,9 +45,37 @@ namespace ECommerceBackend.API.Controllers
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterModel model)
         {
+            string? userAgent = HttpContext.Request.Headers.UserAgent;
             try
             {
-                var authResponse = await _authService.RegisterAsync(model);
+                var authResponse = await _authService.RegisterAsync(model, userAgent);
+                SetRefreshTokenInCookie(authResponse.RefreshToken);
+
+                return Ok(new
+                {
+                    authResponse.AccessToken,
+                    authResponse.UserId
+                });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("refresh-token")]
+        public async Task<IActionResult> RefreshTokenAsync()
+        {
+            var refreshToken = Request.Cookies["refreshToken"];
+            string? userAgent = HttpContext.Request.Headers.UserAgent;
+
+            if (string.IsNullOrEmpty(refreshToken))
+            {
+                return BadRequest(new { message = "No refresh token provided" });
+            }
+            try
+            {
+                var authResponse = await _authService.RefreshTokenAsync(refreshToken, userAgent);
                 SetRefreshTokenInCookie(authResponse.RefreshToken);
 
                 return Ok(new
@@ -67,7 +96,7 @@ namespace ECommerceBackend.API.Controllers
             {
                 HttpOnly = true,
                 Secure = true, // Only send on HTTPS
-                SameSite = SameSiteMode.Strict,
+                SameSite = SameSiteMode.None, //This allows sending cookies in cross-origin requests
                 Expires = DateTime.UtcNow.AddDays(7)
             };
             Response.Cookies.Append("refreshToken", refreshToken, cookieOptions);
