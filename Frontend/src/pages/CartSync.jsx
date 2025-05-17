@@ -48,9 +48,7 @@ export default function CartSync() {
     console.log("Fetching cart from DB...");
     const fetchCart = async () => {
       try {
-        const cartResponse = await api.get(`/cart/getItems?userId=${currentUserId}`, {
-          withCredentials: true
-        });
+        const cartResponse = await api.get(`/cart/getItems?userId=${currentUserId}`);
         const cartItems = cartResponse.data;
   
         const productsResponse = await axios.get('https://fakestoreapi.com/products/');
@@ -93,9 +91,11 @@ export default function CartSync() {
         const transformedDiff = {
           UserId: currentUserId,
           Added: diff.add.map(item => ({
+            Description: item.title,
             ProductId: item.id,
             Quantity: item.Quantity,
-            UserId: currentUserId
+            UserId: currentUserId,
+            UnitPrice: item.price
           })),
           Updated: diff.update.map(item => ({
             ProductId: item.id,

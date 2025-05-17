@@ -36,7 +36,11 @@ const handleCart = (state = [], action) => {
       // Update localStorage
       // localStorage.setItem("cart", JSON.stringify(updatedCart));
       return updatedCart;
-
+    case "CLEARCART":
+      updatedCart = [];
+      // Clear localStorage
+      // localStorage.removeItem("cart");
+      return updatedCart;
     default:
       return state;
   }

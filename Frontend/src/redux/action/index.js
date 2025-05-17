@@ -14,6 +14,13 @@ export const delCart = (product) =>{
     }
 }
 
+// Clear Cart
+export const clearCart = () => {
+    return {
+        type: "CLEARCART",
+    }
+}
+
 // For Setting the Cart from DB
 export const setCart = (cartItems) => {
     return {
