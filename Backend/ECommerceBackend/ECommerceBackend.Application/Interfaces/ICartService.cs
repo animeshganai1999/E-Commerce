@@ -7,5 +7,6 @@ namespace ECommerceBackend.Application.Interfaces
     {
         Task ApplyCartDiffAsync(CartDiffDTO diff);
         Task<IEnumerable<CartItem>> GetCartByUserIdAsync(Guid userId);
+        //Task DeleteCartItemsAsync(Guid userId);
     }
 }

@@ -23,7 +23,7 @@ namespace ECommerceBackend.API.Controllers
             {
                 return BadRequest("Invalid request.");
             }
-            var (isSuccess, errorMessage) = await _emailService.SendEmailAsync(_config,request);
+            var (isSuccess, errorMessage) = await _emailService.SendEmailAsync(_config, request : request);
             if (isSuccess)
             {
                 return Ok("Email sent successfully.");

@@ -13,15 +13,20 @@ namespace ECommerceBackend.Application.Services
             _cartRepository = cartRepository ?? throw new ArgumentNullException(nameof(cartRepository));
         }
 
-        // This will apply the cart diff to the database.
+        // Fix for CS8601: Possible null reference assignment.
+        // The issue is that `item.Description` in `CartDiffDTO` might be null, but `CartItem.Description` is marked as required.
+        // To fix this, we can use the null-coalescing operator to provide a default value if `item.Description` is null.
+
         public async Task ApplyCartDiffAsync(CartDiffDTO diff)
         {
             // Add new items
             var addedItems = diff.Added.Select(item => new CartItem
             {
                 UserId = diff.UserId,
+                Description = item.Description ?? string.Empty,
                 ProductId = item.ProductId,
-                Quantity = item.Quantity
+                Quantity = item.Quantity,
+                UnitPrice = item.UnitPrice
             });
 
             await _cartRepository.AddRangeAsync(addedItems);
@@ -50,9 +55,22 @@ namespace ECommerceBackend.Application.Services
         {
             // Fetch the cart items for the given user ID
             var cartItems = await _cartRepository.GetCartByUserIdAsync(userId);
-            
+
             // Return the fetched cart items
             return cartItems;
         }
+        //public async Task DeleteCartItemsAsync(Guid userId)
+        //{
+        //    // Fetch the cart items for the given user ID
+        //    var cartItems = await _cartRepository.GetCartByUserIdAsync(userId);
+        //    if (cartItems == null || !cartItems.Any())
+        //        throw new Exception("No items found in the cart.");
+        //    // Delete all cart items for the given user ID
+        //    foreach (var item in cartItems)
+        //    {
+        //        await _cartRepository.DeleteAsync(x => x.UserId == userId && x.ProductId == item.ProductId);
+        //    }
+        //    await _cartRepository.SaveChangesAsync();
+        //}
     }
 }

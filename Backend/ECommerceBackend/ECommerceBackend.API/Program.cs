@@ -7,6 +7,7 @@ using ECommerceBackend.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using QuestPDF.Infrastructure;
 using System.Text; // Add this using directive
 
 var builder = WebApplication.CreateBuilder(args);
@@ -32,6 +33,7 @@ builder.Services.AddScoped<ITokenRepository, TokenRepository>();
 builder.Services.AddTransient<ICartService, CartService>();
 builder.Services.AddTransient<IAuthService, AuthService>();
 builder.Services.AddTransient<IEmailService, EmailService>();
+builder.Services.AddTransient<ICheckoutService, CheckoutService>();
 
 // Register AutoMapper
 builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
@@ -68,6 +70,9 @@ builder.Services.AddCors(options =>
                .AllowCredentials();
     });
 });
+
+// Set QuestPDF license
+QuestPDF.Settings.License = LicenseType.Community;
 
 var app = builder.Build();
 
