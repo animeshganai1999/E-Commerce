@@ -13,11 +13,13 @@ namespace ECommerceBackend.API.Controllers
         private readonly ICheckoutService _checkoutService;
         private readonly IEmailService _emailService;
         private readonly IConfiguration _config;
+        private readonly IOrderedItemService _orderedItemService;
 
-        public CheckoutController(ICheckoutService checkoutService, IEmailService emailService, IConfiguration config)
+        public CheckoutController(ICheckoutService checkoutService, IEmailService emailService, IOrderedItemService orderedItemService, IConfiguration config)
         {
             _checkoutService = checkoutService;
             _emailService = emailService;
+            _orderedItemService = orderedItemService;
             _config = config;
         }
 
@@ -30,11 +32,11 @@ namespace ECommerceBackend.API.Controllers
 
             // Send the Invoive over the mail
             var (isSuccess, errorMessage) = await _emailService.SendEmailAsync(_config, pdfBytes: pdfBytes, ReceiverEmail: invoiceDataModel.OrderDetails.Email);
-            
-            // Save PDF locally or send via email, etc.
-            //var filePath = Path.Combine("Invoices", $"Invoice_{invoiceDataModel.UserId}.pdf");
-            //Directory.CreateDirectory("Invoices");
-            //await System.IO.File.WriteAllBytesAsync(filePath, pdfBytes); // Fixed by explicitly using System.IO.File
+
+            // Fetch all the ordered items (To find the number of orderes and total amount)
+            List<OrderItem> orderItems = await _checkoutService.FetchAllIetmsAsync(invoiceDataModel.UserId);
+
+            _orderedItemService.HandleInvoice(invoiceDataModel.UserId, pdfBytes, orderItems.Count, orderItems.Sum(i => i.TotalPrice) + 30).Wait();
 
             if (isSuccess)
             {

@@ -18,7 +18,7 @@ namespace ECommerceBackend.Application.Services
         {
             _cartRepository = cartRepository;
         }
-        private async Task<List<OrderItem>> FetchAllIetmsAsync(Guid userId)
+        public async Task<List<OrderItem>> FetchAllIetmsAsync(Guid userId)
         {
             // Fetch the cart items for the given user ID
             var cartItems = await _cartRepository.GetCartByUserIdAsync(userId);

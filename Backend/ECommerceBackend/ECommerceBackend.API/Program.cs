@@ -28,12 +28,33 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<ICartRepository, CartRepository>();
 builder.Services.AddScoped<ITokenRepository, TokenRepository>();
+builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 
 // Register services
 builder.Services.AddTransient<ICartService, CartService>();
 builder.Services.AddTransient<IAuthService, AuthService>();
 builder.Services.AddTransient<IEmailService, EmailService>();
 builder.Services.AddTransient<ICheckoutService, CheckoutService>();
+// Register OrderedItemService with parameters from configuration
+builder.Services.AddScoped<IOrderedItemService>(provider =>
+{
+    var invoiceRepository = provider.GetRequiredService<IInvoiceRepository>();
+    var blobConnectionString = builder.Configuration["AzureBlobStorage:ConnectionString"];
+    var containerName = builder.Configuration["AzureBlobStorage:ContainerName"];
+
+    // Ensure blobConnectionString and containerName are not null or empty
+    if (string.IsNullOrEmpty(blobConnectionString))
+    {
+        throw new ArgumentNullException(nameof(blobConnectionString), "Azure Blob Storage connection string is not configured.");
+    }
+
+    if (string.IsNullOrEmpty(containerName))
+    {
+        throw new ArgumentNullException(nameof(containerName), "Azure Blob Storage container name is not configured.");
+    }
+
+    return new OrderedItemService(invoiceRepository, blobConnectionString: blobConnectionString, containerName);
+});
 
 // Register AutoMapper
 builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());

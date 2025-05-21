@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace ECommerceBackend.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20250517062809_InitialCreate")]
+    [Migration("20250521041110_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -121,6 +121,36 @@ namespace ECommerceBackend.Infrastructure.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("ECommerceBackend.Domain.Entities.UserInvoice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("InvoiceDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("InvoiceLink")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("NumberOfItems")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("UserInvoice");
+                });
+
             modelBuilder.Entity("ECommerceBackend.Domain.Entities.CartItem", b =>
                 {
                     b.HasOne("ECommerceBackend.Domain.Entities.User", null)
@@ -139,6 +169,16 @@ namespace ECommerceBackend.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("FK_RefreshTokens_Users_UserId");
+                });
+
+            modelBuilder.Entity("ECommerceBackend.Domain.Entities.UserInvoice", b =>
+                {
+                    b.HasOne("ECommerceBackend.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_Users_CustomerInvoices_UserId");
                 });
 #pragma warning restore 612, 618
         }

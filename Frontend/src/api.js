@@ -8,6 +8,7 @@ const api = axios.create({
 // Request interceptor to attach access token
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('accessToken');
+  // console.log('Access Token:', token);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -26,6 +27,7 @@ api.interceptors.response.use(
       !originalRequest._retry &&
       localStorage.getItem('accessToken')
     ) {
+      console.log('Refreshing access token...');
       originalRequest._retry = true;
       try {
         const response = await axios.post(
