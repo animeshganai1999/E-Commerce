@@ -15,7 +15,7 @@ const handleContact = async (e) => {
       Email: email,
       Message: message
     });
-    console.log("Response:", response.data);
+    // console.log("Response:", response.data);
     alert("Message sent successfully!");
   }catch(error){
     console.error("Error sending message:", error);

@@ -27,7 +27,7 @@ api.interceptors.response.use(
       !originalRequest._retry &&
       localStorage.getItem('accessToken')
     ) {
-      console.log('Refreshing access token...');
+      // console.log('Refreshing access token...');
       originalRequest._retry = true;
       try {
         const response = await axios.post(

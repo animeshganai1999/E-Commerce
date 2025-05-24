@@ -16,7 +16,7 @@ namespace ECommerceBackend.API.Controllers
 
         [Authorize]
         [HttpGet("get-invoice")]
-        public async Task<IActionResult> GetInvoiceByUserId(Guid userId)
+        public async Task<IActionResult> GetInvoiceByUserId([FromQuery] Guid userId)
         {
             var invoices = await _orderedItemService.GetInvoicesByUserIdAsync(userId);
             if (invoices == null || !invoices.Any())
@@ -25,5 +25,5 @@ namespace ECommerceBackend.API.Controllers
             }
             return Ok(invoices);
         }
-    }   
+    }
  }

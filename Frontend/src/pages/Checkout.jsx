@@ -61,7 +61,7 @@ const ShowCheckout = () => {
       },
     })
     .then((response) => {
-      console.log("Invoice created successfully:", response.data);
+      // console.log("Invoice created successfully:", response.data);
       alert("Order Placed Successfully");
       
       // Clear the cart in Redux store

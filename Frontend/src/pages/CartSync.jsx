@@ -45,7 +45,7 @@ export default function CartSync() {
 
   // 🔹 Fetch cart from DB on first load
   useEffect(() => {
-    console.log("Fetching cart from DB...");
+    // console.log("Fetching cart from DB...");
     const fetchCart = async () => {
       try {
         const cartResponse = await api.get(`/cart/getItems?userId=${currentUserId}`);
@@ -67,7 +67,7 @@ export default function CartSync() {
   
       } catch (error) {
         if (error.response && error.response.status === 404) {
-          console.log("Cart is empty for user."); 
+          // console.log("Cart is empty for user."); 
           serverCartRef.current = [];
           dispatch(setCart([])); // Set empty cart if no items found
         } else {

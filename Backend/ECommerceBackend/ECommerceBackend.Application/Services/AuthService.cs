@@ -20,11 +20,19 @@ namespace ECommerceBackend.Application.Services
     {
         private readonly IUserRepository _userRepository;
         private readonly ITokenRepository _tokenRepository;
+        private readonly string _issuer;
+        private readonly string _audience;
+        private readonly string _secret;
+        private readonly int _expiryMinutes;
 
-        public AuthService(IUserRepository userRepository, ITokenRepository tokenRepository)
+        public AuthService(IUserRepository userRepository, ITokenRepository tokenRepository, IConfiguration configuration)
         {
             _userRepository = userRepository;
             _tokenRepository = tokenRepository;
+            _issuer = configuration["Jwt:Issuer"]!;
+            _audience = configuration["Jwt:Audience"]!;
+            _secret = configuration["Jwt:Secret"]!;
+            _expiryMinutes = int.Parse(configuration["Jwt:AccessTokenExpiryMinutes"] ?? "15");
         }
 
         private string GenerateAccessToken(User user)
@@ -35,15 +43,15 @@ namespace ECommerceBackend.Application.Services
                 new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString())
             };
 
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("this_is_a_very_long_secret_key@2025!!"));
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_secret));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var token = new JwtSecurityToken(
-                issuer: "yourdomain.com",
-                audience: "yourdomain.com",
-                claims: claims,
-                expires: DateTime.UtcNow.AddMinutes(15), // Short life access token
-                signingCredentials: creds);
+            issuer: _issuer,
+            audience: _audience,
+            claims: claims,
+            expires: DateTime.UtcNow.AddMinutes(_expiryMinutes),
+            signingCredentials: creds);
 
             return new JwtSecurityTokenHandler().WriteToken(token);
         }

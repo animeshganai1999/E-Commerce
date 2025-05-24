@@ -60,22 +60,26 @@ builder.Services.AddScoped<IOrderedItemService>(provider =>
 builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 
 // Configure JWT authentication
+var jwtSettings = builder.Configuration.GetSection("Jwt");
+var issuer = jwtSettings["Issuer"];
+var audience = jwtSettings["Audience"];
+var secret = jwtSettings["Secret"];
+if(string.IsNullOrEmpty(issuer) || string.IsNullOrEmpty(audience) || string.IsNullOrEmpty(secret))
+{
+    throw new ArgumentNullException("JWT settings are not properly configured in appsettings.json");
+}
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidateIssuer = true, // Validate the issuer of the token
-            ValidateAudience = true, // Validate the audience of the token
-            ValidateLifetime = true, // Validate if the token is expired
-            ValidateIssuerSigningKey = true, // Validate if the signing key is correct
-
-            // The issuer and audience must match what's in the token
-            ValidIssuer = "yourdomain.com",  // Replace with your domain or a URL
-            ValidAudience = "yourdomain.com",  // Replace with your domain or a URL
-
-            // Key used for signing the JWT token
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("this_is_a_very_long_secret_key@2025!!"))  // Use your secret key here
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = issuer,
+            ValidAudience = audience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret)),
             //ClockSkew = TimeSpan.Zero
         };
     });
