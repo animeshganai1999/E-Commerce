@@ -35,8 +35,15 @@ namespace ECommerceBackend.API.Controllers
 
             // Fetch all the ordered items (To find the number of orderes and total amount)
             List<OrderItem> orderItems = await _checkoutService.FetchAllIetmsAsync(invoiceDataModel.UserId);
+            // Save the invoice in the database
+            try
+            {
+                _orderedItemService.HandleInvoice(invoiceDataModel.UserId, pdfBytes, orderItems.Count, orderItems.Sum(i => i.TotalPrice) + 30).Wait();
+            }catch (Exception ex)
+            {
+                Console.WriteLine($"Error while saving invoice: {ex.Message}");
+            }
 
-            _orderedItemService.HandleInvoice(invoiceDataModel.UserId, pdfBytes, orderItems.Count, orderItems.Sum(i => i.TotalPrice) + 30).Wait();
 
             if (isSuccess)
             {
