@@ -12,8 +12,8 @@ namespace ECommerceBackend.Infrastructure.Data.Config
             builder.Property(ci => ci.Id)
                 .ValueGeneratedOnAdd(); // Auto-increment the Id
             builder.Property(ci => ci.UserId)
-                .IsRequired()
-                .HasDefaultValueSql("NEWID()"); // Generate a new GUID for UserId by default
+                .IsRequired();
+
             builder.Property(ci => ci.Description).IsRequired(); // Description is required
             builder.Property(ci => ci.Quantity).IsRequired(); // Quantity is required
             builder.Property(ci => ci.ProductId).IsRequired(); // ProductId is required

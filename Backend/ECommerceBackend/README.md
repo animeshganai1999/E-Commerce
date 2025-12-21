@@ -4,43 +4,43 @@ A secure, scalable, and feature-rich backend API for an e-commerce platform buil
 
 ---
 
-## 🚀 Features
+## ?? Features
 
 ### Core Functionality
-- **🔐 JWT Authentication & Authorization**
+- **?? JWT Authentication & Authorization**
   - Secure user registration and login
   - Access token (15-minute expiry) & refresh token (7-day expiry)
   - HTTP-only cookie-based refresh token storage
   - Token rotation for enhanced security
 
-- **🛒 Shopping Cart Management**
+- **?? Shopping Cart Management**
   - Add, update, and remove cart items
   - Per-user cart isolation
   - Real-time cart synchronization
 
-- **💳 Checkout & Payment Flow**
+- **?? Checkout & Payment Flow**
   - Generate professional PDF invoices using QuestPDF
   - Email invoices to customers
   - Store invoice metadata in database
 
-- **📧 Email Notifications**
+- **?? Email Notifications**
   - Invoice delivery via Gmail SMTP
   - Contact form submissions
   - Configurable email templates
 
-- **📦 Order Management**
+- **?? Order Management**
   - Track customer orders and invoices
   - Secure invoice storage in Azure Blob Storage
   - Invoice history retrieval
 
 ### Security Features
-- **🛡️ Rate Limiting**
+- **??? Rate Limiting**
   - Per-IP rate limiting to prevent abuse
   - Sliding window algorithm for authentication endpoints
   - Fixed window for general API endpoints
   - Customizable limits per endpoint
 
-- **🔒 Security Best Practices**
+- **?? Security Best Practices**
   - Password hashing using ASP.NET Core Identity
   - CORS configuration for frontend integration
   - HTTPS enforcement
@@ -49,7 +49,7 @@ A secure, scalable, and feature-rich backend API for an e-commerce platform buil
 
 ---
 
-## 🛠️ Tech Stack
+## ??? Tech Stack
 
 | Category | Technology |
 |----------|-----------|
@@ -65,82 +65,82 @@ A secure, scalable, and feature-rich backend API for an e-commerce platform buil
 
 ---
 
-## 📁 Project Structure
+## ?? Project Structure
 
 ```
 ECommerceBackend/
-├── ECommerceBackend.API/              # Web API layer
-│   ├── Controllers/                   # API endpoints
-│   │   ├── AuthController.cs          # Authentication endpoints
-│   │   ├── CartController.cs          # Cart management
-│   │   ├── CheckoutController.cs      # Order checkout
-│   │   ├── EmailController.cs         # Email services
-│   │   └── OrderedItemsController.cs  # Invoice retrieval
-│   ├── Configuration/                 # AutoMapper profiles
-│   │   └── AutoMapperConfig.cs        # DTO mappings
-│   ├── Program.cs                     # Application startup & middleware
-│   └── appsettings.json              # Configuration settings
-│
-├── ECommerceBackend.Application/      # Business logic layer
-│   ├── Services/                      # Service implementations
-│   │   ├── AuthService.cs             # Authentication logic
-│   │   ├── CartService.cs             # Cart operations
-│   │   ├── CheckoutService.cs         # Invoice generation
-│   │   ├── EmailService.cs            # Email sending
-│   │   └── OrderedItemService.cs      # Invoice management
-│   ├── Interfaces/                    # Service contracts
-│   │   ├── IAuthService.cs
-│   │   ├── ICartService.cs
-│   │   ├── ICheckoutService.cs
-│   │   ├── IEmailService.cs
-│   │   └── IOrderedItemService.cs
-│   ├── DTOs/                          # Data transfer objects
-│   │   ├── AuthResponse.cs
-│   │   ├── CartItemDTO.cs
-│   │   ├── CartDiffDTO.cs
-│   │   ├── CartItemResponseDTO.cs
-│   │   └── UserDTO.cs
-│   ├── Models/                        # Request/response models
-│   │   ├── LoginModel.cs
-│   │   ├── RegisterModel.cs
-│   │   ├── InvoiceDataModel.cs
-│   │   ├── OrderItem.cs
-│   │   └── OrderDetails.cs
-│   └── Factory/                       # Object creation patterns
-│       └── RefreshTokenFactory.cs
-│
-├── ECommerceBackend.Domain/           # Domain entities
-│   └── Entities/                      # Core business entities
-│       ├── User.cs                    # User entity
-│       ├── CartItem.cs                # Shopping cart item
-│       ├── RefreshToken.cs            # JWT refresh token
-│       └── UserInvoice.cs             # Invoice metadata
-│
-└── ECommerceBackend.Infrastructure/   # Data access layer
-    ├── Data/                          # EF Core context & configurations
-    │   ├── AppDbContext.cs            # Database context
-    │   └── Config/                    # Entity configurations
-    │       ├── UserConfig.cs
-    │       ├── CartItemConfig.cs
-    │       ├── RefreshTokenConfig.cs
-    │       └── UserInvoiceConfig.cs
-    ├── Repositories/                  # Data access repositories
-    │   ├── IRepository.cs             # Generic repository interface
-    │   ├── Repository.cs              # Generic repository implementation
-    │   ├── IUserRepository.cs
-    │   ├── UserRepository.cs
-    │   ├── ICartRepository.cs
-    │   ├── CartRepository.cs
-    │   ├── ITokenRepository.cs
-    │   ├── TokenRepository.cs
-    │   ├── IInvoiceRepository.cs
-    │   └── InvoiceRepository.cs
-    └── Migrations/                    # EF Core migrations
+??? ECommerceBackend.API/              # Web API layer
+?   ??? Controllers/                   # API endpoints
+?   ?   ??? AuthController.cs          # Authentication endpoints
+?   ?   ??? CartController.cs          # Cart management
+?   ?   ??? CheckoutController.cs      # Order checkout
+?   ?   ??? EmailController.cs         # Email services
+?   ?   ??? OrderedItemsController.cs  # Invoice retrieval
+?   ??? Configuration/                 # AutoMapper profiles
+?   ?   ??? AutoMapperConfig.cs        # DTO mappings
+?   ??? Program.cs                     # Application startup & middleware
+?   ??? appsettings.json              # Configuration settings
+?
+??? ECommerceBackend.Application/      # Business logic layer
+?   ??? Services/                      # Service implementations
+?   ?   ??? AuthService.cs             # Authentication logic
+?   ?   ??? CartService.cs             # Cart operations
+?   ?   ??? CheckoutService.cs         # Invoice generation
+?   ?   ??? EmailService.cs            # Email sending
+?   ?   ??? OrderedItemService.cs      # Invoice management
+?   ??? Interfaces/                    # Service contracts
+?   ?   ??? IAuthService.cs
+?   ?   ??? ICartService.cs
+?   ?   ??? ICheckoutService.cs
+?   ?   ??? IEmailService.cs
+?   ?   ??? IOrderedItemService.cs
+?   ??? DTOs/                          # Data transfer objects
+?   ?   ??? AuthResponse.cs
+?   ?   ??? CartItemDTO.cs
+?   ?   ??? CartDiffDTO.cs
+?   ?   ??? CartItemResponseDTO.cs
+?   ?   ??? UserDTO.cs
+?   ??? Models/                        # Request/response models
+?   ?   ??? LoginModel.cs
+?   ?   ??? RegisterModel.cs
+?   ?   ??? InvoiceDataModel.cs
+?   ?   ??? OrderItem.cs
+?   ?   ??? OrderDetails.cs
+?   ??? Factory/                       # Object creation patterns
+?       ??? RefreshTokenFactory.cs
+?
+??? ECommerceBackend.Domain/           # Domain entities
+?   ??? Entities/                      # Core business entities
+?       ??? User.cs                    # User entity
+?       ??? CartItem.cs                # Shopping cart item
+?       ??? RefreshToken.cs            # JWT refresh token
+?       ??? UserInvoice.cs             # Invoice metadata
+?
+??? ECommerceBackend.Infrastructure/   # Data access layer
+    ??? Data/                          # EF Core context & configurations
+    ?   ??? AppDbContext.cs            # Database context
+    ?   ??? Config/                    # Entity configurations
+    ?       ??? UserConfig.cs
+    ?       ??? CartItemConfig.cs
+    ?       ??? RefreshTokenConfig.cs
+    ?       ??? UserInvoiceConfig.cs
+    ??? Repositories/                  # Data access repositories
+    ?   ??? IRepository.cs             # Generic repository interface
+    ?   ??? Repository.cs              # Generic repository implementation
+    ?   ??? IUserRepository.cs
+    ?   ??? UserRepository.cs
+    ?   ??? ICartRepository.cs
+    ?   ??? CartRepository.cs
+    ?   ??? ITokenRepository.cs
+    ?   ??? TokenRepository.cs
+    ?   ??? IInvoiceRepository.cs
+    ?   ??? InvoiceRepository.cs
+    ??? Migrations/                    # EF Core migrations
 ```
 
 ---
 
-## 🚀 Getting Started
+## ?? Getting Started
 
 ### Prerequisites
 
@@ -195,7 +195,7 @@ Update `appsettings.json` with your settings:
 }
 ```
 
-**⚠️ Security Warning**: Never commit `appsettings.json` with real credentials to version control!
+**?? Security Warning**: Never commit `appsettings.json` with real credentials to version control!
 
 **Use User Secrets for development:**
 
@@ -236,7 +236,7 @@ Navigate to **`https://localhost:7244/swagger`** for interactive API documentati
 
 ---
 
-## 🔧 Configuration
+## ?? Configuration
 
 ### Email Settings (Gmail SMTP)
 
@@ -287,15 +287,15 @@ builder.Services.AddCors(options =>
 
 ---
 
-## 📚 API Endpoints
+## ?? API Endpoints
 
 ### Authentication
 
 | Method | Endpoint | Description | Rate Limit | Auth Required |
 |--------|----------|-------------|------------|---------------|
-| `POST` | `/api/Auth/login` | User login | 5/min | ❌ |
-| `POST` | `/api/Auth/register` | User registration | 5/min | ❌ |
-| `POST` | `/api/Auth/refresh-token` | Refresh access token | 10/min | ❌ |
+| `POST` | `/api/Auth/login` | User login | 5/min | ? |
+| `POST` | `/api/Auth/register` | User registration | 5/min | ? |
+| `POST` | `/api/Auth/refresh-token` | Refresh access token | 10/min | ? |
 
 **Request Body (Login):**
 ```json
@@ -319,8 +319,8 @@ builder.Services.AddCors(options =>
 
 | Method | Endpoint | Description | Rate Limit | Auth Required |
 |--------|----------|-------------|------------|---------------|
-| `POST` | `/api/Cart/update` | Update cart items | 30/min | ✅ |
-| `GET` | `/api/Cart/getItems` | Get user's cart | 30/min | ✅ |
+| `POST` | `/api/Cart/update` | Update cart items | 30/min | ? |
+| `GET` | `/api/Cart/getItems` | Get user's cart | 30/min | ? |
 
 **Request Body (Update Cart):**
 ```json
@@ -348,7 +348,7 @@ builder.Services.AddCors(options =>
 
 | Method | Endpoint | Description | Rate Limit | Auth Required |
 |--------|----------|-------------|------------|---------------|
-| `POST` | `/api/Checkout/generate-invoice` | Generate & email invoice | 30/min | ✅ |
+| `POST` | `/api/Checkout/generate-invoice` | Generate & email invoice | 30/min | ? |
 
 **Request Body:**
 ```json
@@ -373,7 +373,7 @@ builder.Services.AddCors(options =>
 
 | Method | Endpoint | Description | Rate Limit | Auth Required |
 |--------|----------|-------------|------------|---------------|
-| `GET` | `/api/OrderedItems/get-invoice` | Get user's invoices | 30/min | ✅ |
+| `GET` | `/api/OrderedItems/get-invoice` | Get user's invoices | 30/min | ? |
 
 **Response:**
 ```json
@@ -393,7 +393,7 @@ builder.Services.AddCors(options =>
 
 | Method | Endpoint | Description | Rate Limit | Auth Required |
 |--------|----------|-------------|------------|---------------|
-| `POST` | `/api/Email/send` | Send contact email | 30/min | ❌ |
+| `POST` | `/api/Email/send` | Send contact email | 30/min | ? |
 
 **Request Body:**
 ```json
@@ -406,7 +406,7 @@ builder.Services.AddCors(options =>
 
 ---
 
-## 🗄️ Database Schema
+## ??? Database Schema
 
 ### Users Table
 ```sql
@@ -460,7 +460,7 @@ CREATE TABLE UserInvoices (
 
 ---
 
-## 🔐 Security Features
+## ?? Security Features
 
 ### Authentication & Authorization Flow
 
@@ -511,19 +511,19 @@ HMACSHA256(
 
 ### Security Best Practices Implemented
 
-- ✅ **Password Hashing**: Using ASP.NET Core Identity's `PasswordHasher`
-- ✅ **JWT Signature Verification**: Every token is cryptographically verified
-- ✅ **Token Expiration**: Short-lived access tokens (15 minutes)
-- ✅ **Refresh Token Rotation**: New refresh token on each refresh
-- ✅ **HTTP-Only Cookies**: Prevents XSS attacks on refresh tokens
-- ✅ **Secure Cookies**: Only transmitted over HTTPS
-- ✅ **SameSite=None**: Allows cross-origin requests with credentials
-- ✅ **CORS Restrictions**: Configurable allowed origins
-- ✅ **Rate Limiting**: Per-IP address to prevent brute force
-- ✅ **Issuer/Audience Validation**: Prevents token misuse across applications
-- ✅ **User ID Extraction from JWT**: Controllers get user ID from token, not request params
-- ✅ **Input Validation**: Model validation via `[ApiController]` attribute
-- ✅ **SQL Injection Prevention**: EF Core parameterized queries
+- ? **Password Hashing**: Using ASP.NET Core Identity's `PasswordHasher`
+- ? **JWT Signature Verification**: Every token is cryptographically verified
+- ? **Token Expiration**: Short-lived access tokens (15 minutes)
+- ? **Refresh Token Rotation**: New refresh token on each refresh
+- ? **HTTP-Only Cookies**: Prevents XSS attacks on refresh tokens
+- ? **Secure Cookies**: Only transmitted over HTTPS
+- ? **SameSite=None**: Allows cross-origin requests with credentials
+- ? **CORS Restrictions**: Configurable allowed origins
+- ? **Rate Limiting**: Per-IP address to prevent brute force
+- ? **Issuer/Audience Validation**: Prevents token misuse across applications
+- ? **User ID Extraction from JWT**: Controllers get user ID from token, not request params
+- ? **Input Validation**: Model validation via `[ApiController]` attribute
+- ? **SQL Injection Prevention**: EF Core parameterized queries
 
 ### Rate Limiting Details
 
@@ -571,7 +571,7 @@ options.AddPolicy("auth", context =>
 
 ---
 
-## 🧪 Development
+## ?? Development
 
 ### Running with Hot Reload
 
@@ -664,7 +664,7 @@ Retry-After: 45
 
 ---
 
-## 📦 Dependencies
+## ?? Dependencies
 
 ### Key NuGet Packages
 
@@ -690,7 +690,7 @@ Retry-After: 45
 
 ---
 
-## 🚀 Deployment
+## ?? Deployment
 
 ### Deploy to Azure App Service
 
@@ -748,7 +748,7 @@ dotnet ef database update --project ECommerceBackend.Infrastructure --startup-pr
 
 ---
 
-## 🤝 Contributing
+## ?? Contributing
 
 Contributions are welcome! Please follow these steps:
 
@@ -777,7 +777,7 @@ Contributions are welcome! Please follow these steps:
 
 ---
 
-## 📄 License
+## ?? License
 
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
@@ -807,7 +807,7 @@ SOFTWARE.
 
 ---
 
-## 👤 Author
+## ?? Author
 
 **Animesh Ganai**
 
@@ -817,7 +817,7 @@ SOFTWARE.
 
 ---
 
-## 🙏 Acknowledgments
+## ?? Acknowledgments
 
 - [ASP.NET Core Documentation](https://docs.microsoft.com/en-us/aspnet/core)
 - [Entity Framework Core](https://docs.microsoft.com/en-us/ef/core)
@@ -828,35 +828,35 @@ SOFTWARE.
 
 ---
 
-## 📝 Changelog
+## ?? Changelog
 
 ### Version 1.0.0 (2025-12-21)
 
 **Added:**
-- ✅ JWT authentication with access and refresh tokens
-- ✅ User registration and login endpoints
-- ✅ Shopping cart management (add, update, delete items)
-- ✅ PDF invoice generation using QuestPDF
-- ✅ Email notifications via Gmail SMTP
-- ✅ Invoice storage in Azure Blob Storage
-- ✅ Rate limiting per IP address (sliding/fixed window)
-- ✅ CORS configuration for frontend integration
-- ✅ Swagger/OpenAPI documentation
-- ✅ Entity Framework Core with SQL Server
-- ✅ Repository pattern for data access
-- ✅ AutoMapper for DTO mappings
-- ✅ User ID extraction from JWT claims for security
+- ? JWT authentication with access and refresh tokens
+- ? User registration and login endpoints
+- ? Shopping cart management (add, update, delete items)
+- ? PDF invoice generation using QuestPDF
+- ? Email notifications via Gmail SMTP
+- ? Invoice storage in Azure Blob Storage
+- ? Rate limiting per IP address (sliding/fixed window)
+- ? CORS configuration for frontend integration
+- ? Swagger/OpenAPI documentation
+- ? Entity Framework Core with SQL Server
+- ? Repository pattern for data access
+- ? AutoMapper for DTO mappings
+- ? User ID extraction from JWT claims for security
 
 **Security:**
-- ✅ Password hashing with ASP.NET Core Identity
-- ✅ HTTP-only cookies for refresh tokens
-- ✅ Issuer and Audience validation in JWT
-- ✅ Per-IP rate limiting to prevent abuse
-- ✅ HTTPS enforcement
+- ? Password hashing with ASP.NET Core Identity
+- ? HTTP-only cookies for refresh tokens
+- ? Issuer and Audience validation in JWT
+- ? Per-IP rate limiting to prevent abuse
+- ? HTTPS enforcement
 
 ---
 
-## 📊 Project Statistics
+## ?? Project Statistics
 
 - **Total Projects**: 4 (API, Application, Domain, Infrastructure)
 - **Architecture**: Clean Architecture / Onion Architecture
@@ -870,7 +870,7 @@ SOFTWARE.
 
 ---
 
-## 🔮 Future Enhancements
+## ?? Future Enhancements
 
 - [ ] Add unit and integration tests
 - [ ] Implement forgot password functionality
@@ -895,7 +895,7 @@ SOFTWARE.
 
 ---
 
-## 📞 Support
+## ?? Support
 
 If you encounter any issues or have questions:
 
@@ -906,10 +906,10 @@ If you encounter any issues or have questions:
 
 ---
 
-## ⭐ Star History
+## ? Star History
 
 If you find this project helpful, please consider giving it a star on GitHub! It helps others discover the project.
 
 ---
 
-**Built with ❤️ using .NET 8 by Animesh Ganai**
+**Built with ?? using .NET 8 by Animesh Ganai**

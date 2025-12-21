@@ -3,6 +3,7 @@ using ECommerceBackend.Application.Models;
 using ECommerceBackend.Application.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ECommerceBackend.API.Controllers
 {
@@ -25,6 +26,7 @@ namespace ECommerceBackend.API.Controllers
 
         [Authorize]
         [HttpPost("generate-invoice")]
+        [EnableRateLimiting("api")]
         public async Task<IActionResult> Checkout([FromBody] InvoiceDataModel invoiceDataModel)
         {
             Console.WriteLine($"Checkout : UserId: {invoiceDataModel.UserId}");

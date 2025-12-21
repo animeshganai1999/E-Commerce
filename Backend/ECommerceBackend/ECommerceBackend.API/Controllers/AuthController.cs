@@ -3,6 +3,7 @@ using ECommerceBackend.Application.Models;
 using ECommerceBackend.Application.Services;
 using ECommerceBackend.Domain.Entities;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -22,6 +23,7 @@ namespace ECommerceBackend.API.Controllers
         }
 
         [HttpPost("login")]
+        [EnableRateLimiting("auth")]
         public async Task<IActionResult> Login([FromBody] LoginModel model)
         {
             string? userAgent = HttpContext.Request.Headers.UserAgent;
@@ -43,6 +45,7 @@ namespace ECommerceBackend.API.Controllers
         }
 
         [HttpPost("register")]
+        [EnableRateLimiting("auth")]
         public async Task<IActionResult> Register([FromBody] RegisterModel model)
         {
             string? userAgent = HttpContext.Request.Headers.UserAgent;
@@ -64,6 +67,7 @@ namespace ECommerceBackend.API.Controllers
         }
 
         [HttpPost("refresh-token")]
+        [EnableRateLimiting("refresh")]
         public async Task<IActionResult> RefreshTokenAsync()
         {
             var refreshToken = Request.Cookies["refreshToken"];

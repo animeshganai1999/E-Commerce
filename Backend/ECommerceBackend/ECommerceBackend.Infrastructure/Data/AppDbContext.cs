@@ -14,6 +14,8 @@ namespace ECommerceBackend.Infrastructure.Data
         public DbSet<CartItem> CartItems { get; set; } // Create a context file for CartItem model
         public DbSet<RefreshToken> RefreshTokens { get; set; } // Create a context file for RefreshToken model
         public DbSet<UserInvoice> UserInvoice { get; set; } // Create a context file for CustomerInvoice model
+
+        // Override the OnModelCreating method to apply configurations
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.ApplyConfiguration(new UserConfig());

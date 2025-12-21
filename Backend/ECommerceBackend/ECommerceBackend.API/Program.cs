@@ -5,10 +5,12 @@ using ECommerceBackend.Application.Services;
 using ECommerceBackend.Infrastructure.Data;
 using ECommerceBackend.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using QuestPDF.Infrastructure;
 using System.Text; // Add this using directive
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -64,7 +66,7 @@ var jwtSettings = builder.Configuration.GetSection("Jwt");
 var issuer = jwtSettings["Issuer"];
 var audience = jwtSettings["Audience"];
 var secret = jwtSettings["Secret"];
-if(string.IsNullOrEmpty(issuer) || string.IsNullOrEmpty(audience) || string.IsNullOrEmpty(secret))
+if (string.IsNullOrEmpty(issuer) || string.IsNullOrEmpty(audience) || string.IsNullOrEmpty(secret))
 {
     throw new ArgumentNullException("JWT settings are not properly configured in appsettings.json");
 }
@@ -83,6 +85,91 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             //ClockSkew = TimeSpan.Zero
         };
     });
+
+builder.Services.AddAuthorization();
+
+// Configure Rate Limiting
+builder.Services.AddRateLimiter(options =>
+{
+    // Global rate limit per IP address
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    {
+        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ipAddress,
+            factory: partition => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 100,
+                Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            });
+    });
+
+    // Strict rate limit for authentication endpoints (per IP)
+    options.AddPolicy("auth", context =>
+    {
+        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ipAddress,
+            factory: partition => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,  // 5 requests per IP
+                Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            });
+    });
+
+    // Moderate rate limit for refresh token endpoint (per IP)
+    options.AddPolicy("refresh", context =>
+    {
+        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ipAddress,
+            factory: partition => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,  // 10 requests per IP
+                Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            });
+    });
+
+    // Standard rate limit for API endpoints (per IP)
+    options.AddPolicy("api", context =>
+    {
+        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ipAddress,
+            factory: partition => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,  // 30 requests per IP
+                Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            });
+    });
+
+    // Customize the response when rate limit is exceeded
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            context.HttpContext.Response.Headers.RetryAfter = retryAfter.TotalSeconds.ToString();
+        }
+
+        await context.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            message = "Too many requests. Please try again later.",
+            retryAfter = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retry)
+                ? (double?)retry.TotalSeconds
+                : null
+        }, cancellationToken: cancellationToken);
+    };
+});
 
 // Enable CORS
 builder.Services.AddCors(options =>
@@ -104,6 +191,10 @@ var app = builder.Build();
 // Use CORS
 app.UseCors("AllowFrontend"); // Apply the "AllowFrontend" policy globally
 
+// Use Rate Limiting (must be before UseAuthentication)
+app.UseRateLimiter();
+
+app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.Run();
