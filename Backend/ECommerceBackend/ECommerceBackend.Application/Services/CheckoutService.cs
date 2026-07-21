@@ -8,15 +8,27 @@ using QuestPDF.Elements;
 using ECommerceBackend.Infrastructure.Repositories;
 using ECommerceBackend.Domain.Entities;
 using Microsoft.AspNetCore.SignalR;
+using System.Text.Json;
 
 namespace ECommerceBackend.Application.Services
 {
     public class CheckoutService : ICheckoutService
     {
         ICartRepository _cartRepository;
-        public CheckoutService(ICartRepository cartRepository)
+        private readonly IOrderRepository _orderRepository;
+        private readonly IStockReservationRepository _stockReservation;
+        private readonly IOutboxRepository _outboxRepository;
+
+        public CheckoutService(
+            ICartRepository cartRepository,
+            IOrderRepository orderRepository,
+            IStockReservationRepository stockReservation,
+            IOutboxRepository outboxRepository)
         {
             _cartRepository = cartRepository;
+            _orderRepository = orderRepository;
+            _stockReservation = stockReservation;
+            _outboxRepository = outboxRepository;
         }
         public async Task<List<OrderItem>> FetchAllIetmsAsync(Guid userId)
         {
@@ -39,6 +51,72 @@ namespace ECommerceBackend.Application.Services
             // Fetch the order items asynchronously
             List<OrderItem> orderItems = await FetchAllIetmsAsync(model.UserId);
 
+            return BuildInvoicePdf(model.OrderDetails, orderItems);
+        }
+
+        public async Task<byte[]> GenerateInvoiceForOrderAsync(Guid orderId)
+        {
+            var order = await _orderRepository.GetByIdAsync(orderId);
+            if (order == null)
+                throw new Exception($"Order {orderId} not found.");
+
+            var orderItems = order.Items.Select(item => new OrderItem
+            {
+                Description = item.Description,
+                Quantity = item.Quantity,
+                UnitPrice = item.UnitPrice,
+                TotalPrice = item.Quantity * item.UnitPrice
+            }).ToList();
+
+            var details = new OrderDetails
+            {
+                FirstName = order.FirstName ?? string.Empty,
+                LastName = order.LastName ?? string.Empty,
+                Email = order.Email ?? string.Empty,
+                Address = order.Address ?? string.Empty,
+                Address2 = order.Address2 ?? string.Empty,
+                Country = order.Country ?? string.Empty,
+                State = order.State ?? string.Empty,
+                Zip = order.Zip ?? string.Empty
+            };
+
+            return BuildInvoicePdf(details, orderItems);
+        }
+
+        public async Task ReleaseStockAsync(Guid orderId)
+        {
+            var order = await _orderRepository.GetByIdAsync(orderId);
+            if (order == null) return;
+
+            foreach (var item in order.Items)
+                await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
+
+            await _orderRepository.UpdateStatusAsync(orderId, OrderStatus.Failed);
+            await _orderRepository.SaveChangesAsync();
+        }
+
+        public async Task ConfirmStockAsync(Guid orderId)
+        {
+            var order = await _orderRepository.GetByIdAsync(orderId);
+            if (order == null) return;
+
+            await _orderRepository.UpdateStatusAsync(orderId, OrderStatus.Confirmed, DateTime.UtcNow);
+
+            // Enqueue fulfillment (invoice + email + stock settle) via the outbox.
+            await _outboxRepository.AddAsync(new OutboxMessage
+            {
+                Id = Guid.NewGuid(),
+                Type = "OrderConfirmed",
+                Payload = JsonSerializer.Serialize(new { OrderId = orderId }),
+                CreatedAt = DateTime.UtcNow
+            });
+
+            await _orderRepository.SaveChangesAsync();
+            await _outboxRepository.SaveChangesAsync();
+        }
+
+        private static byte[] BuildInvoicePdf(OrderDetails details, List<OrderItem> orderItems)
+        {
             var document = Document.Create(container =>
             {
                 container.Page(page =>
@@ -49,7 +127,7 @@ namespace ECommerceBackend.Application.Services
                     page.DefaultTextStyle(x => x.FontSize(12));
 
                     page.Header().Element(ComposeHeader);
-                    page.Content().Element(c => ComposeContent(c, model, orderItems));
+                    page.Content().Element(c => ComposeContent(c, details, orderItems));
                     page.Footer().AlignCenter().Text(x =>
                     {
                         x.Span("Thank you for your purchase!");
@@ -74,11 +152,11 @@ namespace ECommerceBackend.Application.Services
             });
         }
 
-        private static void ComposeContent(IContainer container, InvoiceDataModel model, List<OrderItem> OrderItems)
+        private static void ComposeContent(IContainer container, OrderDetails details, List<OrderItem> OrderItems)
         {
             container.PaddingVertical(10).Column(col =>
             {
-                col.Item().Element(c => ComposeCustomerDetails(c, model.OrderDetails));
+                col.Item().Element(c => ComposeCustomerDetails(c, details));
                 col.Item().PaddingTop(15).Element(c => ComposeTable(c, OrderItems));
                 col.Item().PaddingTop(10).AlignRight().Text($"Total Amount: ₹ {OrderItems.Sum(i => i.TotalPrice) + 30}").Bold().FontSize(14);
             });

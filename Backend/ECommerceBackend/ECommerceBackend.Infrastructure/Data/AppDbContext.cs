@@ -14,6 +14,10 @@ namespace ECommerceBackend.Infrastructure.Data
         public DbSet<CartItem> CartItems { get; set; } // Create a context file for CartItem model
         public DbSet<RefreshToken> RefreshTokens { get; set; } // Create a context file for RefreshToken model
         public DbSet<UserInvoice> UserInvoice { get; set; } // Create a context file for CustomerInvoice model
+        public DbSet<Product> Products { get; set; }
+        public DbSet<Order> Orders { get; set; }
+        public DbSet<OrderLineItem> OrderItems { get; set; }
+        public DbSet<OutboxMessage> OutboxMessages { get; set; }
 
         // Override the OnModelCreating method to apply configurations
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -22,6 +26,10 @@ namespace ECommerceBackend.Infrastructure.Data
             modelBuilder.ApplyConfiguration(new CartItemConfig());
             modelBuilder.ApplyConfiguration(new RefreshTokenConfig());
             modelBuilder.ApplyConfiguration(new UserInvoiceConfig());
+            modelBuilder.ApplyConfiguration(new ProductConfig());
+            modelBuilder.ApplyConfiguration(new OrderConfig());
+            modelBuilder.ApplyConfiguration(new OrderLineItemConfig());
+            modelBuilder.ApplyConfiguration(new OutboxMessageConfig());
             base.OnModelCreating(modelBuilder);
         }
     }

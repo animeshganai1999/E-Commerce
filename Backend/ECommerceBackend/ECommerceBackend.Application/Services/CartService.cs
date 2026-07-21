@@ -8,9 +8,11 @@ namespace ECommerceBackend.Application.Services
     public class CartService : ICartService
     {
         private readonly ICartRepository _cartRepository;
-        public CartService(ICartRepository cartRepository)
+        private readonly ICartCache _cartCache;
+        public CartService(ICartRepository cartRepository, ICartCache cartCache)
         {
             _cartRepository = cartRepository ?? throw new ArgumentNullException(nameof(cartRepository));
+            _cartCache = cartCache ?? throw new ArgumentNullException(nameof(cartCache));
         }
 
         // Fix for CS8601: Possible null reference assignment.
@@ -49,15 +51,24 @@ namespace ECommerceBackend.Application.Services
             }
 
             await _cartRepository.SaveChangesAsync();
+
+            // Invalidate the cached cart so subsequent reads reflect the latest state.
+            await _cartCache.InvalidateAsync(diff.UserId);
         }
 
         public async Task<IEnumerable<CartItem>> GetCartByUserIdAsync(Guid userId)
         {
-            // Fetch the cart items for the given user ID
+            // Cache-aside: serve from Redis on a hit, else load from SQL and populate the cache.
+            var cached = await _cartCache.GetByUserAsync(userId);
+            if (cached != null)
+                return cached;
+
             var cartItems = await _cartRepository.GetCartByUserIdAsync(userId);
 
-            // Return the fetched cart items
-            return cartItems;
+            var items = cartItems.ToList();
+            await _cartCache.SetByUserAsync(userId, items);
+
+            return items;
         }
         //public async Task DeleteCartItemsAsync(Guid userId)
         //{

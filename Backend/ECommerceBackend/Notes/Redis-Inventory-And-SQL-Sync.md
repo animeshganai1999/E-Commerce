@@ -27,7 +27,8 @@ SETTLE:      100 writes   -> SQL     (TRICKLE)
 ```
 
 > Rule of thumb: Redis = **fast working counter** (hot path). SQL = **durable source of truth**.
-> Redis does NOT help "add to cart" (no contention there — cart is per-user).
+> Redis does NOT help "add to cart" for **contention** (cart is per-user, no oversell risk), but a
+> per-user Redis **read-cache** still offloads the frequent cart reads from SQL (see Section 16).
 
 ---
 
@@ -302,6 +303,9 @@ All use `CreateScope()` per iteration (singleton service -> scoped repositories)
 | `lock:reservation-sweeper` | STRING (NX+EX) | sweeper | Distributed lock |
 | `lock:outbox-processor` | STRING (NX+EX) | outbox processor | Distributed lock |
 | `lock:stock-reconciliation` | STRING (NX+EX) | reconciliation | Distributed lock |
+| `cache:products:page:{category\|all}:{page}:{pageSize}` | STRING (JSON) | product read-cache | One catalog page; TTL 5m (Section 15) |
+| `cache:products:{productId}` | STRING (JSON) | product read-cache | Single product detail; TTL 5m (Section 15) |
+| `cache:cart:{userId}` | STRING (JSON) | cart read-cache | One user's cart; TTL 10m, invalidated on write (Section 16) |
 
 **Naming convention = namespacing.** Redis is a flat key-value store; the `type:id` prefix
 (`stock:`, `reservation:`, `idempotency:`, `lock:`) acts as a logical "table". This is what lets
@@ -387,6 +391,53 @@ benefit. `InvalidateAsync` now only clears the affected **per-id** keys; pages j
 
 ---
 
+## 16. Cart Read-Cache (cache-aside)
+
+Like the catalog cache (Section 15), a user's **cart** is served through a Redis **cache-aside**
+layer (`CartCache`). It reuses the **same `IConnectionMultiplexer`** as the reservation system and
+the product cache — one Redis programming model across the codebase (no `IDistributedCache`).
+
+### Why a cart read-cache
+The cart is **read on every page load** (navbar count, cart page, checkout) but changes only when
+the user edits it. There is **no contention** here — a cart is **per-user**, so unlike stock it has
+no oversell risk. The value is purely **offloading the repeated read** from SQL. Correctness is
+maintained by **explicit invalidation on every write**, so the cache never serves a stale cart; a
+short **10-min TTL** is only a safety net.
+
+### Per-user key
+Each user's cart is one Redis STRING keyed by user id — no giant shared key:
+```
+cache:cart:{userId}   ->   JSON( List<CartItem> )
+```
+
+### Cache-aside flow (`CartService`)
+```
+GET cart (GetCartByUserIdAsync):
+   hit  -> return cached cart          (no SQL)
+   miss -> SQL (GetCartByUserIdAsync) -> SetByUserAsync (TTL 10m) -> return
+
+WRITE cart (ApplyCartDiffAsync):
+   apply add/update/remove to SQL -> SaveChanges
+   InvalidateAsync(userId)   -> DEL cache:cart:{userId}   (next read repopulates)
+```
+
+### Invalidate-on-write (not update-on-write)
+`ApplyCartDiffAsync` **deletes** the key after persisting, rather than rewriting it. This keeps the
+cache correct with minimal logic — the next read lazily repopulates from the authoritative SQL
+state. It avoids any risk of the cache and SQL diverging after a partial diff (add + update +
+remove in one call).
+
+### Cache key
+| Key pattern | Type | Written by | Purpose / TTL |
+|-------------|------|-----------|---------------|
+| `cache:cart:{userId}` | STRING (JSON) | `GetCartByUserIdAsync` (miss) | One user's cart items; TTL 10m, invalidated on every write |
+
+> This is a **read-cache** key (prefix `cache:cart:`), separate from both the `stock:{id}` hot path
+> and the `cache:products:*` catalog cache. Because it is invalidated on every write, staleness is
+> effectively zero; the TTL is only a self-heal net for a missed invalidation.
+
+---
+
 ## Key Takeaways
 1. **Redis = hot working counter** (helps at RESERVE); **SQL = durable truth**.
 2. **Reserve** is the only high-concurrency point -> Redis Lua atomic prevents oversell.
@@ -401,6 +452,8 @@ benefit. `InvalidateAsync` now only clears the affected **per-id** keys; pages j
 9. **Catalog read-cache** (cache-aside, `cache:products:*`, 5-min TTL) offloads read-heavy
    product/paged queries from SQL — separate from the `stock:{id}` hot path, so it never
    affects oversell correctness. Pages are per-category, case-insensitive, and self-expire.
-9. **Two-step flow**: `/checkout/begin` (reserve) -> `/payment/pay` (confirm/release) ->
-   background worker does invoice + email + stock settlement — so the request path is fast.
-10. **Multi-instance:** shared Redis is safe; background jobs need a **distributed lock**.
+10. **Cart read-cache** (cache-aside, `cache:cart:{userId}`, 10-min TTL) offloads per-user cart
+    reads from SQL — no contention (cart is per-user), correctness kept by **invalidate-on-write**.
+11. **Two-step flow**: `/checkout/begin` (reserve) -> `/payment/pay` (confirm/release) ->
+    background worker does invoice + email + stock settlement — so the request path is fast.
+12. **Multi-instance:** shared Redis is safe; background jobs need a **distributed lock**.
