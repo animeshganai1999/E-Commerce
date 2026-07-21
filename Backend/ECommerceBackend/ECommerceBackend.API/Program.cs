@@ -68,6 +68,9 @@ builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<ICheckoutService, CheckoutService>();
 builder.Services.AddScoped<IProductService, ProductService>();
 
+// Register Key Vault service for direct secret access if needed
+builder.Services.AddScoped<IKeyVaultService, KeyVaultService>();
+
 // Bind Azure Blob Storage settings using the Options pattern
 builder.Services.AddOptions<AzureBlobOptions>()
     .Bind(builder.Configuration.GetSection(AzureBlobOptions.SectionName))
