@@ -1,18 +1,38 @@
-﻿using ECommerceBackend.Application.Interfaces;
+﻿using Azure.Extensions.AspNetCore.Configuration.Secrets;
+using Azure.Identity;
+using Azure.Storage.Blobs;
+using ECommerceBackend.Application.Interfaces;
+using ECommerceBackend.Application.Options;
 using ECommerceBackend.Application.Services;
 
 //using ECommerceBackend.Application.Services;
 using ECommerceBackend.Infrastructure.Data;
 using ECommerceBackend.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using QuestPDF.Infrastructure;
+using StackExchange.Redis;
 using System.Text; // Add this using directive
-using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Integrate Azure Key Vault for secret management
+// This allows the application to retrieve secrets from Azure Key Vault instead of appsettings.json
+var keyVaultName = builder.Configuration["KeyVaultName"];
+if (!string.IsNullOrEmpty(keyVaultName))
+{
+    var keyVaultUri = new Uri($"https://{keyVaultName}.vault.azure.net/");
+    builder.Configuration.AddAzureKeyVault(
+        keyVaultUri,
+        new DefaultAzureCredential(),
+        new AzureKeyVaultConfigurationOptions
+        {
+            // Optional: Configure reload interval if secrets need to be refreshed
+            // ReloadInterval = TimeSpan.FromMinutes(5)
+        });
+}
 
 // Add controllers and configure JSON serialization settings (PascalCase)
 builder.Services.AddControllers()
@@ -25,41 +45,58 @@ builder.Services.AddControllers()
 //builder.Services.AddScoped<IAuthService, AuthService>();
 // Add EF Core with SQL Server
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("ECommerceBackendDBConnection")));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("ECommerceBackendDBConnection"),
+        sql => sql.EnableRetryOnFailure(
+            maxRetryCount: 5,
+            maxRetryDelay: TimeSpan.FromSeconds(10),
+            errorNumbersToAdd: null))); // retry on transient SQL faults
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<ICartRepository, CartRepository>();
 builder.Services.AddScoped<ITokenRepository, TokenRepository>();
 builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
-
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+builder.Services.AddScoped<IOrderRepository, OrderRepository>();
+builder.Services.AddScoped<IOutboxRepository, OutboxRepository>();
+builder.Services.AddScoped<IIdempotencyRepository, IdempotencyRepository>();
+builder.Services.AddScoped<IProductCache, ProductCache>();
+builder.Services.AddScoped<ICartCache, CartCache>();
 // Register services
-builder.Services.AddTransient<ICartService, CartService>();
-builder.Services.AddTransient<IAuthService, AuthService>();
-builder.Services.AddTransient<IEmailService, EmailService>();
-builder.Services.AddTransient<ICheckoutService, CheckoutService>();
-// Register OrderedItemService with parameters from configuration
-builder.Services.AddScoped<IOrderedItemService>(provider =>
+builder.Services.AddScoped<ICartService, CartService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<ICheckoutService, CheckoutService>();
+builder.Services.AddScoped<IProductService, ProductService>();
+
+// Bind Azure Blob Storage settings using the Options pattern
+builder.Services.AddOptions<AzureBlobOptions>()
+    .Bind(builder.Configuration.GetSection(AzureBlobOptions.SectionName))
+    .Validate(o => !string.IsNullOrEmpty(o.ConnectionString), "Azure Blob Storage connection string is not configured.")
+    .Validate(o => !string.IsNullOrEmpty(o.ContainerName), "Azure Blob Storage container name is not configured.")
+    .ValidateOnStart();
+
+builder.Services.AddScoped<IOrderedItemService, OrderedItemService>();
+
+// Register BlobServiceClient as a singleton
+builder.Services.AddSingleton(sp =>
 {
-    var invoiceRepository = provider.GetRequiredService<IInvoiceRepository>();
-    var blobConnectionString = builder.Configuration["AzureBlobStorage:ConnectionString"];
-    var containerName = builder.Configuration["AzureBlobStorage:ContainerName"];
-
-    // Ensure blobConnectionString and containerName are not null or empty
-    if (string.IsNullOrEmpty(blobConnectionString))
-    {
-        throw new ArgumentNullException(nameof(blobConnectionString), "Azure Blob Storage connection string is not configured.");
-    }
-
-    if (string.IsNullOrEmpty(containerName))
-    {
-        throw new ArgumentNullException(nameof(containerName), "Azure Blob Storage container name is not configured.");
-    }
-
-    return new OrderedItemService(invoiceRepository, blobConnectionString: blobConnectionString, containerName);
+    var options = sp.GetRequiredService<IOptions<AzureBlobOptions>>().Value;
+    return new BlobServiceClient(options.ConnectionString);
 });
 
+// Redis connection
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+    ConnectionMultiplexer.Connect(
+        builder.Configuration.GetConnectionString("Redis")!));
+
+// Reservation repository
+builder.Services.AddScoped<IStockReservationRepository, StockReservationRepository>();
+
+// Background sweeper (runs on every instance, but the lock ensures only one sweeps)
+builder.Services.AddHostedService<ReservationSweeperService>();
+
 // Register AutoMapper
-builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+builder.Services.AddAutoMapper(cfg => { }, typeof(ECommerceBackend.API.Configuration.AutoMapperConfig).Assembly);
 
 // Configure JWT authentication
 var jwtSettings = builder.Configuration.GetSection("Jwt");
@@ -88,99 +125,47 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
-// Configure Rate Limiting
-builder.Services.AddRateLimiter(options =>
-{
-    // Global rate limit per IP address
-    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-    {
-        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        return RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: ipAddress,
-            factory: partition => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 100,
-                Window = TimeSpan.FromMinutes(1),
-                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                QueueLimit = 0
-            });
-    });
-
-    // Strict rate limit for authentication endpoints (per IP)
-    options.AddPolicy("auth", context =>
-    {
-        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        return RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: ipAddress,
-            factory: partition => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 5,  // 5 requests per IP
-                Window = TimeSpan.FromMinutes(1),
-                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                QueueLimit = 0
-            });
-    });
-
-    // Moderate rate limit for refresh token endpoint (per IP)
-    options.AddPolicy("refresh", context =>
-    {
-        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        return RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: ipAddress,
-            factory: partition => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 10,  // 10 requests per IP
-                Window = TimeSpan.FromMinutes(1),
-                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                QueueLimit = 0
-            });
-    });
-
-    // Standard rate limit for API endpoints (per IP)
-    options.AddPolicy("api", context =>
-    {
-        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        return RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: ipAddress,
-            factory: partition => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 30,  // 30 requests per IP
-                Window = TimeSpan.FromMinutes(1),
-                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                QueueLimit = 0
-            });
-    });
-
-    // Customize the response when rate limit is exceeded
-    options.OnRejected = async (context, cancellationToken) =>
-    {
-        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-
-        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
-        {
-            context.HttpContext.Response.Headers.RetryAfter = retryAfter.TotalSeconds.ToString();
-        }
-
-        await context.HttpContext.Response.WriteAsJsonAsync(new
-        {
-            message = "Too many requests. Please try again later.",
-            retryAfter = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retry)
-                ? (double?)retry.TotalSeconds
-                : null
-        }, cancellationToken: cancellationToken);
-    };
-});
+// Rate limiting is enforced at the API Gateway level (e.g., Azure API Management),
+// so the in-app rate limiter has been removed.
 
 // Enable CORS
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? new[] { "http://localhost:3000" };
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowFrontend", builder =>
+    options.AddPolicy("AllowFrontend", policy =>
     {
-        builder.WithOrigins("http://localhost:3000") // Allow requests from your frontend's URL
+        policy.WithOrigins(allowedOrigins) // Allowed frontend URLs from configuration
                .AllowAnyMethod()  // Allow any HTTP method (GET, POST, PUT, DELETE, etc.)
                .AllowAnyHeader() // Allow any headers in the request
                .AllowCredentials();
     });
+});
+
+// Global exception handling (RFC 7807 ProblemDetails)
+builder.Services.AddExceptionHandler<ECommerceBackend.API.Infrastructure.GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
+// Background outbox processor (crash-safe Redis + SQL stock settlement)
+builder.Services.AddHostedService<ECommerceBackend.API.HostedServices.OutboxProcessorService>();
+
+// Background reconciliation (self-heals Redis <-> SQL stock drift)
+builder.Services.AddHostedService<ECommerceBackend.API.HostedServices.StockReconciliationService>();
+
+// Health checks for SQL Server and Redis
+var sqlConn = builder.Configuration.GetConnectionString("ECommerceBackendDBConnection");
+var redisConn = builder.Configuration.GetConnectionString("Redis");
+var healthChecks = builder.Services.AddHealthChecks();
+if (!string.IsNullOrEmpty(sqlConn))
+    healthChecks.AddSqlServer(sqlConn, name: "sql-server");
+if (!string.IsNullOrEmpty(redisConn))
+    healthChecks.AddRedis(redisConn, name: "redis");
+
+// Configure forwarded headers so the correct client IP/scheme is seen behind a proxy/load balancer
+builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+        | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
 });
 
 // Set QuestPDF license
@@ -188,13 +173,20 @@ QuestPDF.Settings.License = LicenseType.Community;
 
 var app = builder.Build();
 
+// Honor forwarded headers (client IP / scheme) when behind a proxy or load balancer
+app.UseForwardedHeaders();
+
+// Global exception handling — returns ProblemDetails for unhandled exceptions
+app.UseExceptionHandler();
+
+// Redirect HTTP to HTTPS
+app.UseHttpsRedirection();
+
 // Use CORS
 app.UseCors("AllowFrontend"); // Apply the "AllowFrontend" policy globally
-
-// Use Rate Limiting (must be before UseAuthentication)
-app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHealthChecks("/health");
 app.Run();
