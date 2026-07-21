@@ -64,14 +64,14 @@
 
 ### Phase 1: Preparation and Setup
 
-- [in_progress] Verify existing Azure Key Vault packages are installed
-- [ ] Verify existing Key Vault integration in Program.cs
-- [ ] Create `.appmod/.gitignore` file with content "*" to exclude migration files
-- [ ] Create PowerShell script for uploading secrets to Azure Key Vault (`.appmod/scripts/upload-secrets-to-keyvault.ps1`)
+- [X] Verify existing Azure Key Vault packages are installed
+- [X] Verify existing Key Vault integration in Program.cs
+- [X] Create `.appmod/.gitignore` file with content "*" to exclude migration files
+- [X] Create PowerShell script for uploading secrets to Azure Key Vault (`.appmod/scripts/upload-secrets-to-keyvault.ps1`)
 
 ### Phase 2: Configuration Updates
 
-- [ ] Create backup of current appsettings.json
+- [in_progress] Create backup of current appsettings.json
 - [ ] Update `appsettings.json` to add `KeyVaultName` configuration
 - [ ] Comment out or remove sensitive values from `appsettings.json` (JWT:Secret, EmailSettings:AppPassword, ConnectionStrings, AzureBlobStorage:ConnectionString)
 - [ ] Update `appsettings.Development.json` to include KeyVaultName for local development
