@@ -304,6 +304,7 @@ All use `CreateScope()` per iteration (singleton service -> scoped repositories)
 | `lock:outbox-processor` | STRING (NX+EX) | outbox processor | Distributed lock |
 | `lock:stock-reconciliation` | STRING (NX+EX) | reconciliation | Distributed lock |
 | `cache:products:page:{category\|all}:{page}:{pageSize}` | STRING (JSON) | product read-cache | One catalog page; TTL 5m (Section 15) |
+| `cache:products:cursor:{category\|all}:{afterId\|start}:{pageSize}` | STRING (JSON) | product read-cache | One keyset "Load more" batch; TTL 5m (Section 17) |
 | `cache:products:{productId}` | STRING (JSON) | product read-cache | Single product detail; TTL 5m (Section 15) |
 | `cache:cart:{userId}` | STRING (JSON) | cart read-cache | One user's cart; TTL 10m, invalidated on write (Section 16) |
 
@@ -350,6 +351,10 @@ image) with a **short 5-min TTL**, so any staleness self-heals quickly.
 The repository does `WHERE Category=@c` + `OrderBy(Id)` + `Skip/Take` + `Count` (all
 `AsNoTracking`), backed by an **index on `Product.Category`**. Each **page** is cached as its own
 small key, so no single giant key ever holds the whole catalog.
+
+> **Two pagination styles are available** — offset (numbered pages) and keyset ("Load more").
+> See **Section 17** for the keyset/cursor endpoint and why it scales better for deep scrolling.
+
 
 ### Cache-aside flow
 ```
@@ -438,6 +443,205 @@ remove in one call).
 
 ---
 
+## 17. Keyset (Cursor) Pagination — "Load More"
+
+The catalog exposes **two** pagination styles. Both are cache-aside over the same Redis
+(`IConnectionMultiplexer`) and both filter by category the same way; they differ only in **how the
+client walks the list**.
+
+| Endpoint | Style | Client control | Best for |
+|----------|-------|----------------|----------|
+| `GET /api/products` | **Offset** (`Skip/Take`) | page number | numbered page buttons, "jump to page N" |
+| `GET /api/products/feed` | **Keyset / cursor** (`WHERE Id > cursor`) | opaque cursor | **"Load more" / infinite scroll** |
+
+The frontend uses a **"Load more"** experience, so `feed` is the preferred endpoint.
+
+### Why keyset over offset for deep lists
+`OFFSET N` is **O(N + pageSize)** — the database must generate and discard the first `N` rows
+before returning the page. The deeper you scroll, the slower it gets:
+
+```
+Batch 1     OFFSET 0       -> read 20 rows        fast
+Batch 100   OFFSET 1,980   -> read 2,000 rows     slower
+Batch 5000  OFFSET 99,980  -> read 100,000 rows   slow
+```
+
+Keyset instead **seeks** straight to the cursor position via the index — **O(pageSize)** at any
+depth:
+
+```
+Batch 5000  WHERE Id > 99,980 ORDER BY Id  -> read ~21 rows   still fast
+```
+
+### The query (`ProductRepository.GetProductsByCursorAsync`)
+```csharp
+IQueryable<Product> query = _context.Products.AsNoTracking();
+if (!string.IsNullOrWhiteSpace(category))
+    query = query.Where(p => p.Category == category);
+if (afterId.HasValue)
+    query = query.Where(p => p.Id > afterId.Value);   // the seek
+
+var rows = await query
+    .OrderBy(p => p.Id)
+    .Take(pageSize + 1)          // fetch ONE extra as a "there's more?" probe
+    .ToListAsync();
+```
+Generated SQL (batch after cursor 20):
+```sql
+SELECT TOP (21) *
+FROM Products
+WHERE Category = @category AND Id > 20
+ORDER BY Id;
+```
+
+### The `pageSize + 1` probe
+Fetching one extra row is how the API knows whether to show a "Load more" button — with **no**
+extra `COUNT(*)` query (offset pagination pays that count on every request):
+```csharp
+int? nextCursor = null;
+if (rows.Count > pageSize)       // got the probe row back -> more exist
+{
+    rows.RemoveAt(pageSize);     // drop the probe
+    nextCursor = rows[^1].Id;    // cursor for the next call = last item's Id
+}
+// fewer than pageSize+1 rows -> end of list -> nextCursor stays null
+```
+
+### Response shape (`CursorResult<T>`)
+```jsonc
+// GET /api/products/feed?afterId=20&pageSize=20
+{
+  "items":      [ /* products 21..40 */ ],
+  "nextCursor": 40,     // pass as ?afterId=40 next time
+  "hasMore":    true,   // false + nextCursor:null => hide "Load more"
+  "pageSize":   20
+}
+```
+First call omits `afterId` (starts at the beginning). Each subsequent "Load more" passes the
+previous `nextCursor` as `afterId`.
+
+### Cache-aside (cursor-keyed)
+Same pattern as the offset cache, but keyed by the **cursor** instead of a page number:
+```
+GET feed:
+   hit  -> return cached batch (no SQL)
+   miss -> keyset SQL query -> SetCursor (TTL 5m) -> return
+```
+Key format (`start` for the first batch):
+```
+cache:products:cursor:{category|all}:{afterId|start}:{pageSize}
+```
+Examples:
+```
+?pageSize=20                                  -> cache:products:cursor:all:start:20
+?afterId=20&pageSize=20                       -> cache:products:cursor:all:20:20
+?afterId=40&pageSize=20&category=electronics  -> cache:products:cursor:electronics:40:20
+```
+Like the page cache, cursor keys **self-expire via TTL** (no registry set) and category is
+normalized to lower-case so `Electronics`/`electronics` share a key.
+
+### Index recommendation
+Keyset filters + orders on `(Category, Id)`. The current index is single-column `Category`, which
+still works (the PK clustered index on `Id` assists the seek). For **optimal** performance a
+**composite `(Category, Id)`** index is recommended — this should be added via a **dedicated,
+reviewed EF migration** (kept out of the pagination change to avoid scaffolding unrelated model
+drift).
+
+### Cache keys
+| Key pattern | Type | Written by | Purpose / TTL |
+|-------------|------|-----------|---------------|
+| `cache:products:cursor:{category\|all}:{afterId\|start}:{pageSize}` | STRING (JSON) | `GetProductsByCursorAsync` (miss) | One keyset batch (items + nextCursor); TTL 5m |
+
+### Trade-off (why not use keyset everywhere)
+| | Offset (`/api/products`) | Keyset (`/api/products/feed`) |
+|---|---|---|
+| Deep-page speed | degrades with depth | **constant** |
+| Jump to arbitrary page ("Page 500") | **yes** | no (sequential only) |
+| Total count / "of 5,000" | easy (`TotalCount`) | not returned (would need a cached count) |
+| Numbered page buttons | **ideal** | not suitable |
+| "Load more" / infinite scroll | works | **ideal** |
+
+> Both endpoints coexist — offset for any numbered-page UI, keyset for the "Load more" feed. The
+> keyset path never runs a `COUNT(*)`, and reads a constant ~21 rows per batch at any depth.
+
+---
+
+## 18. Azure Managed Redis — Passwordless Connection (Entra ID)
+
+The app connects to **Azure Managed Redis** using **Microsoft Entra ID** authentication via
+`DefaultAzureCredential` — **no access keys or connection-string secrets** anywhere.
+
+### Why passwordless
+- **No secret to leak** — access keys are **disabled** on the cache; only identity-based auth works.
+- **Consistent with the rest of the stack** — the app already uses `DefaultAzureCredential` for
+  Key Vault; Redis now uses the same identity model.
+- **Automatic token refresh** — `Microsoft.Azure.StackExchangeRedis` refreshes the Entra token
+  before expiry, so long-lived connections don't drop.
+
+### Configuration
+Only the **host name** is stored (not a secret — auth is identity-based), in `appsettings.json`:
+```json
+"Redis": { "HostName": "ecommerce-redis-animesh.westus.redis.azure.net" }
+```
+> There is **no** `ConnectionStrings:Redis` and **no** `ConnectionStrings--Redis` Key Vault secret —
+> both were removed when moving to passwordless. Azure Managed Redis uses **port 10000 + TLS**
+> (classic Azure Cache for Redis used 6380).
+
+### Connection setup (`Program.cs`)
+```csharp
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+{
+    var redisHostName = builder.Configuration["Redis:HostName"];
+    if (string.IsNullOrEmpty(redisHostName))
+    {
+        // Local dev fallback: raw connection string (e.g. "localhost:6379")
+        return ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")!);
+    }
+
+    var options = ConfigurationOptions.Parse($"{redisHostName}:10000");
+    options.Ssl = true;
+    options.AbortOnConnectFail = false;   // resilient: keep retrying, don't crash on startup
+    options.ConfigureForAzureWithTokenCredentialAsync(new DefaultAzureCredential())
+           .GetAwaiter().GetResult();      // enables Entra ID auth + auto token refresh
+    return ConnectionMultiplexer.Connect(options);
+});
+```
+`ConfigureForAzureWithTokenCredentialAsync` is an extension from the
+**`Microsoft.Azure.StackExchangeRedis`** package.
+
+### Identity ? data access (required)
+Entra auth needs a **data-plane** access-policy assignment on the cache — being subscription
+**Owner** is *not* enough (that's control-plane only):
+- **Local dev:** assign your `az login` user the **Data Owner** (`+@all ~*`) access policy on the
+  Redis instance (portal: *Access policies* / CLI:
+  `az redisenterprise database access-policy-assignment`).
+- **Azure deploy:** enable **Managed Identity** on the App Service / Container App and assign it
+  the same Data Owner access policy.
+
+### Health check
+The Redis health check reuses the **same registered `IConnectionMultiplexer`**, so it authenticates
+via Entra ID exactly like the app (no separate connection string):
+```csharp
+healthChecks.AddRedis(sp => sp.GetRequiredService<IConnectionMultiplexer>(), name: "redis");
+```
+
+### Cache settings (provisioned)
+| Setting | Value | Note |
+|---------|-------|------|
+| Port / protocol | `10000` / TLS | Azure Managed Redis default |
+| Access keys | **Disabled** | Entra ID only — no key to leak |
+| Eviction policy | `VolatileLRU` | evicts only keys **with a TTL**; keys set **without** TTL (e.g. stock/reservation) are protected |
+| Network | Public (dev) | lock down with a Private Endpoint for production |
+| Geo-replication | Off | HA feature, not needed for dev |
+
+> **Eviction & the hot path:** `VolatileLRU` only evicts keys that have an expiry. The cache-aside
+> entries (`cache:products:*`, `cache:cart:*`) carry TTLs so they can be evicted safely, while
+> authoritative `stock:{id}` / `reservation:*` keys created without a TTL are **not** evicted —
+> preserving inventory correctness (Section 8). Any drift from a Redis restart/eviction is still
+> self-healed by the **reconciliation** service (Section 12).
+
+---
+
 ## Key Takeaways
 1. **Redis = hot working counter** (helps at RESERVE); **SQL = durable truth**.
 2. **Reserve** is the only high-concurrency point -> Redis Lua atomic prevents oversell.
@@ -457,3 +661,10 @@ remove in one call).
 11. **Two-step flow**: `/checkout/begin` (reserve) -> `/payment/pay` (confirm/release) ->
     background worker does invoice + email + stock settlement — so the request path is fast.
 12. **Multi-instance:** shared Redis is safe; background jobs need a **distributed lock**.
+13. **Two pagination styles**: **offset** (`/api/products`, numbered pages) and **keyset/cursor**
+    (`/api/products/feed`, "Load more"). Keyset seeks via `WHERE Id > cursor` — **constant** cost
+    at any depth, no `COUNT(*)` — and is cache-aside keyed by cursor (`cache:products:cursor:*`).
+14. **Passwordless Redis**: connects to **Azure Managed Redis** via **Entra ID**
+    (`DefaultAzureCredential`, port 10000 + TLS, `Microsoft.Azure.StackExchangeRedis`). Access keys
+    are **disabled**; only the non-secret `Redis:HostName` is configured. Needs a **Data Owner**
+    access-policy assignment on the cache (Owner/IAM is control-plane only). See Section 18.
