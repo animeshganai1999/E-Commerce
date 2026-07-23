@@ -1,9 +1,10 @@
 ﻿using ECommerceBackend.Application.Interfaces;
+using ECommerceBackend.API.Filters;
+using ECommerceBackend.Application.Exceptions;
 using ECommerceBackend.Application.Models;
 using ECommerceBackend.Application.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.RateLimiting;
 
 namespace ECommerceBackend.API.Controllers
 {
@@ -12,48 +13,33 @@ namespace ECommerceBackend.API.Controllers
     public class CheckoutController : ControllerBase
     {
         private readonly ICheckoutService _checkoutService;
-        private readonly IEmailService _emailService;
-        private readonly IConfiguration _config;
-        private readonly IOrderedItemService _orderedItemService;
 
-        public CheckoutController(ICheckoutService checkoutService, IEmailService emailService, IOrderedItemService orderedItemService, IConfiguration config)
+        public CheckoutController(ICheckoutService checkoutService)
         {
             _checkoutService = checkoutService;
-            _emailService = emailService;
-            _orderedItemService = orderedItemService;
-            _config = config;
         }
 
+        // Step 1 of checkout: reserve stock (Redis) + create a Pending order (with a billing
+        // snapshot). The [Idempotent] filter (Idempotency-Key header) makes a double-click /
+        // network retry replay the same result instead of creating a second order.
         [Authorize]
-        [HttpPost("generate-invoice")]
-        [EnableRateLimiting("api")]
-        public async Task<IActionResult> Checkout([FromBody] InvoiceDataModel invoiceDataModel)
+        [HttpPost("begin")]
+        [Idempotent]
+        public async Task<IActionResult> Begin([FromBody] BeginCheckoutModel model)
         {
-            Console.WriteLine($"Checkout : UserId: {invoiceDataModel.UserId}");
-            var pdfBytes = await _checkoutService.GenerateInvoiceAsync(invoiceDataModel);
-
-            // Send the Invoive over the mail
-            var (isSuccess, errorMessage) = await _emailService.SendEmailAsync(_config, pdfBytes: pdfBytes, ReceiverEmail: invoiceDataModel.OrderDetails.Email);
-
-            // Fetch all the ordered items (To find the number of orderes and total amount)
-            List<OrderItem> orderItems = await _checkoutService.FetchAllIetmsAsync(invoiceDataModel.UserId);
-            // Save the invoice in the database
             try
             {
-                _orderedItemService.HandleInvoice(invoiceDataModel.UserId, pdfBytes, orderItems.Count, orderItems.Sum(i => i.TotalPrice) + 30).Wait();
-            }catch (Exception ex)
-            {
-                Console.WriteLine($"Error while saving invoice: {ex.Message}");
+                var result = await _checkoutService.BeginCheckoutAsync(model);
+                return Ok(result);
             }
-
-
-            if (isSuccess)
+            catch (InsufficientStockException ex)
             {
-                return Ok("Ordere placed and Invoice sent successfully over Email.");
-            }
-            else
-            {
-                return StatusCode(500, $"Error sending email: {errorMessage}");
+                return Conflict(new
+                {
+                    message = "Some items are out of stock.",
+                    productId = ex.ProductId,
+                    requestedQuantity = ex.RequestedQuantity
+                });
             }
         }
     }

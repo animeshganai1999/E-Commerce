@@ -6,7 +6,6 @@ using ECommerceBackend.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
-using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace ECommerceBackend.API.Controllers
@@ -27,7 +26,6 @@ namespace ECommerceBackend.API.Controllers
         }
         [Authorize]
         [HttpPost("update")]
-        [EnableRateLimiting("api")]
         public async Task<IActionResult> UpdateCart([FromBody] CartDiffDTO cartDiff)
         {
             Console.WriteLine($"Update : UserId: {cartDiff.UserId}");
@@ -36,7 +34,6 @@ namespace ECommerceBackend.API.Controllers
         }
         [Authorize]
         [HttpGet("getItems")]
-        [EnableRateLimiting("api")]
         public async Task<IActionResult> GetCart([FromQuery] Guid userId)
         {
             // Extract userId from JWT claims
