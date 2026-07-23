@@ -113,11 +113,6 @@ $secrets = @{
         Description = "SQL Server database connection string"
         Example = "Server=yourserver.database.windows.net;Database=ECommerceDb;Authentication=Active Directory Default;"
     }
-    "ConnectionStrings--Redis" = @{
-        Value = "YOUR_REDIS_CONNECTION_STRING"
-        Description = "Redis cache connection string"
-        Example = "yourredis.redis.cache.windows.net:6380,password=xxx,ssl=True"
-    }
     "AzureBlobStorage--ConnectionString" = @{
         Value = "YOUR_AZURE_BLOB_STORAGE_CONNECTION_STRING"
         Description = "Azure Blob Storage connection string for invoice storage"
@@ -134,8 +129,9 @@ Write-Warning "secrets before running. Edit this script and replace:"
 Write-Warning "  - YOUR_JWT_SECRET_HERE_AT_LEAST_32_CHARACTERS"
 Write-Warning "  - YOUR_GMAIL_APP_PASSWORD"
 Write-Warning "  - YOUR_SQL_SERVER_CONNECTION_STRING"
-Write-Warning "  - YOUR_REDIS_CONNECTION_STRING"
 Write-Warning "  - YOUR_AZURE_BLOB_STORAGE_CONNECTION_STRING"
+Write-Warning ""
+Write-Warning "NOTE: Redis is NOT stored here - it uses passwordless Entra ID auth."
 Write-Warning ""
 Write-Warning "Alternatively, pass values as parameters or read from secure vault."
 Write-Warning "============================================================================"
