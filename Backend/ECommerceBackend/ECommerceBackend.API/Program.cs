@@ -177,20 +177,18 @@ builder.Services.AddHostedService<ECommerceBackend.API.HostedServices.StockRecon
 // Health checks for SQL Server and Redis
 var sqlConn = builder.Configuration.GetConnectionString("ECommerceBackendDBConnection");
 var redisHostConfigured = !string.IsNullOrEmpty(builder.Configuration["Redis:HostName"]);
-var redisConn = builder.Configuration.GetConnectionString("Redis");
+var redisConnFallback = builder.Configuration.GetConnectionString("Redis");
 var healthChecks = builder.Services.AddHealthChecks();
 if (!string.IsNullOrEmpty(sqlConn))
     healthChecks.AddSqlServer(sqlConn, name: "sql-server");
-if (redisHostConfigured)
+if (redisHostConfigured || !string.IsNullOrEmpty(redisConnFallback))
 {
-    // Use the registered (passwordless) multiplexer for the Redis health check
+    // Reuse the registered IConnectionMultiplexer so the health check authenticates
+    // exactly like the app (passwordless Entra ID for Azure Managed Redis, or the
+    // fallback connection string for local development).
     healthChecks.AddRedis(
         sp => sp.GetRequiredService<IConnectionMultiplexer>(),
         name: "redis");
-}
-else if (!string.IsNullOrEmpty(redisConn))
-{
-    healthChecks.AddRedis(redisConn, name: "redis");
 }
 
 // Configure forwarded headers so the correct client IP/scheme is seen behind a proxy/load balancer
