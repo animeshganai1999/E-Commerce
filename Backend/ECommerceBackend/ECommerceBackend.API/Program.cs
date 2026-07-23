@@ -15,6 +15,8 @@ using Microsoft.IdentityModel.Tokens;
 using QuestPDF.Infrastructure;
 using StackExchange.Redis;
 using System.Text; // Add this using directive
+// Note: ConfigureForAzureWithTokenCredentialAsync is an extension method provided by
+// the Microsoft.Azure.StackExchangeRedis package (enables passwordless Entra ID auth).
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -87,10 +89,27 @@ builder.Services.AddSingleton(sp =>
     return new BlobServiceClient(options.ConnectionString);
 });
 
-// Redis connection
+// Redis connection (Azure Managed Redis - passwordless via Microsoft Entra ID / Managed Identity)
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
-    ConnectionMultiplexer.Connect(
-        builder.Configuration.GetConnectionString("Redis")!));
+{
+    var redisHostName = builder.Configuration["Redis:HostName"];
+    if (string.IsNullOrEmpty(redisHostName))
+    {
+        // Fallback to a raw connection string (e.g. local development with "localhost:6379")
+        var redisConnectionString = builder.Configuration.GetConnectionString("Redis")!;
+        return ConnectionMultiplexer.Connect(redisConnectionString);
+    }
+
+    // Azure Managed Redis uses port 10000 and requires TLS
+    var configurationOptions = ConfigurationOptions.Parse($"{redisHostName}:10000");
+    configurationOptions.Ssl = true;
+    configurationOptions.AbortOnConnectFail = false; // resilient: keep retrying instead of throwing on startup
+    configurationOptions
+        .ConfigureForAzureWithTokenCredentialAsync(new DefaultAzureCredential())
+        .GetAwaiter().GetResult();
+
+    return ConnectionMultiplexer.Connect(configurationOptions);
+});
 
 // Reservation repository
 builder.Services.AddScoped<IStockReservationRepository, StockReservationRepository>();
@@ -157,12 +176,22 @@ builder.Services.AddHostedService<ECommerceBackend.API.HostedServices.StockRecon
 
 // Health checks for SQL Server and Redis
 var sqlConn = builder.Configuration.GetConnectionString("ECommerceBackendDBConnection");
+var redisHostConfigured = !string.IsNullOrEmpty(builder.Configuration["Redis:HostName"]);
 var redisConn = builder.Configuration.GetConnectionString("Redis");
 var healthChecks = builder.Services.AddHealthChecks();
 if (!string.IsNullOrEmpty(sqlConn))
     healthChecks.AddSqlServer(sqlConn, name: "sql-server");
-if (!string.IsNullOrEmpty(redisConn))
+if (redisHostConfigured)
+{
+    // Use the registered (passwordless) multiplexer for the Redis health check
+    healthChecks.AddRedis(
+        sp => sp.GetRequiredService<IConnectionMultiplexer>(),
+        name: "redis");
+}
+else if (!string.IsNullOrEmpty(redisConn))
+{
     healthChecks.AddRedis(redisConn, name: "redis");
+}
 
 // Configure forwarded headers so the correct client IP/scheme is seen behind a proxy/load balancer
 builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(options =>

@@ -1,22 +1,24 @@
 ﻿using Azure.Storage.Blobs.Models;
 using Azure.Storage.Blobs;
 using ECommerceBackend.Application.Interfaces;
+using ECommerceBackend.Application.Options;
 using ECommerceBackend.Domain.Entities;
 using ECommerceBackend.Infrastructure.Repositories;
+using Microsoft.Extensions.Options;
 
 namespace ECommerceBackend.Application.Services
 {
     public class OrderedItemService : IOrderedItemService
     {
-        
+
         public readonly IInvoiceRepository _invoiceRepository;
         private readonly string _blobConnectionString;
         private readonly string _containerName;
-        public OrderedItemService(IInvoiceRepository invoiceRepository, string blobConnectionString, string containerName)
+        public OrderedItemService(IInvoiceRepository invoiceRepository, IOptions<AzureBlobOptions> blobOptions)
         {
             _invoiceRepository = invoiceRepository;
-            _blobConnectionString = blobConnectionString;
-            _containerName = containerName;
+            _blobConnectionString = blobOptions.Value.ConnectionString;
+            _containerName = blobOptions.Value.ContainerName;
         }
         public async Task SaveInvoiceUrlToDB(Guid userId, string pdfUrl, int NumberOfItems, decimal TotalAmount)
         {
