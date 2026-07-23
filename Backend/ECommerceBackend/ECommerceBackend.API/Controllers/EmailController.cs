@@ -2,7 +2,6 @@
 using ECommerceBackend.Application.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.RateLimiting;
 
 namespace ECommerceBackend.API.Controllers
 {
@@ -19,7 +18,6 @@ namespace ECommerceBackend.API.Controllers
         }
 
         [HttpPost("send")]
-        [EnableRateLimiting("api")]
         public async Task<IActionResult> SendEmail([FromBody] ContactRequestModel request)
         {
             if (request == null)

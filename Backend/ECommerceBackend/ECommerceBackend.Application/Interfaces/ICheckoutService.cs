@@ -4,8 +4,9 @@ namespace ECommerceBackend.Application.Interfaces
 {
     public interface ICheckoutService
     {
-        Task<byte[]> GenerateInvoiceAsync(InvoiceDataModel model);
-        Task<List<OrderItem>> FetchAllIetmsAsync(Guid userId);
+        // Step 1 of checkout: reserve stock in Redis + create a Pending order (with a billing
+        // snapshot). Throws InsufficientStockException if any item cannot be reserved.
+        Task<BeginCheckoutResult> BeginCheckoutAsync(BeginCheckoutModel model);
 
         // Generate an invoice PDF for a previously placed order (off the request path).
         Task<byte[]> GenerateInvoiceForOrderAsync(Guid orderId);

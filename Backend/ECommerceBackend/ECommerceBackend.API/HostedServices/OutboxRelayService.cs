@@ -1,24 +1,25 @@
-using ECommerceBackend.Application.Interfaces;
-using ECommerceBackend.Domain.Entities;
+using ECommerceBackend.Application.Messaging;
 using ECommerceBackend.Infrastructure.Repositories;
 using System.Text.Json;
 
 namespace ECommerceBackend.API.HostedServices
 {
-    // Reliably processes outbox messages: settles stock (Redis + SQL) AND performs the slow
-    // fulfillment work (invoice PDF + email) OFF the request path. Retries on failure.
-    public class OutboxProcessorService : BackgroundService
+    // Outbox RELAY: reliably reads confirmed-order outbox messages, settles stock inline
+    // (fast + critical), then PUBLISHES a fulfillment message to Azure Service Bus. The slow
+    // work (invoice PDF + email + persist) is handled off this path by FulfillmentWorker.
+    //
+    // Outbox = atomic capture (written in the same SQL txn as Order=Confirmed).
+    // Service Bus = reliable transport with independent retries + dead-lettering.
+    public class OutboxRelayService : BackgroundService
     {
         private readonly IServiceProvider _services;
-        private readonly ILogger<OutboxProcessorService> _logger;
-        private readonly IConfiguration _config;
+        private readonly ILogger<OutboxRelayService> _logger;
         private readonly TimeSpan _interval = TimeSpan.FromSeconds(5);
 
-        public OutboxProcessorService(IServiceProvider services, ILogger<OutboxProcessorService> logger, IConfiguration config)
+        public OutboxRelayService(IServiceProvider services, ILogger<OutboxRelayService> logger)
         {
             _services = services;
             _logger = logger;
-            _config = config;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -33,11 +34,9 @@ namespace ECommerceBackend.API.HostedServices
                     var stockReservation = scope.ServiceProvider.GetRequiredService<IStockReservationRepository>();
                     var productRepo = scope.ServiceProvider.GetRequiredService<IProductRepository>();
                     var orderRepo = scope.ServiceProvider.GetRequiredService<IOrderRepository>();
-                    var checkoutService = scope.ServiceProvider.GetRequiredService<ICheckoutService>();
-                    var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
-                    var orderedItemService = scope.ServiceProvider.GetRequiredService<IOrderedItemService>();
+                    var publisher = scope.ServiceProvider.GetRequiredService<IFulfillmentPublisher>();
 
-                    // Only one instance processes the outbox per cycle (multi-instance safe).
+                    // Only one instance relays the outbox per cycle (multi-instance safe).
                     var lockToken = await stockReservation.AcquireLockAsync(lockKey, TimeSpan.FromSeconds(25));
                     if (lockToken is null)
                     {
@@ -54,15 +53,15 @@ namespace ECommerceBackend.API.HostedServices
                             try
                             {
                                 if (msg.Type == "OrderConfirmed")
-                                    await FulfillOrderAsync(msg.Payload, stockReservation, productRepo,
-                                        orderRepo, checkoutService, emailService, orderedItemService);
+                                    await SettleAndPublishAsync(msg.Payload, stockReservation, productRepo,
+                                        orderRepo, publisher, stoppingToken);
 
                                 await outbox.MarkProcessedAsync(msg.Id);
                             }
                             catch (Exception ex)
                             {
                                 await outbox.MarkFailedAsync(msg.Id, ex.Message);
-                                _logger.LogError(ex, "Outbox message {Id} failed (retry {Retry})", msg.Id, msg.RetryCount + 1);
+                                _logger.LogError(ex, "Outbox relay message {Id} failed (retry {Retry})", msg.Id, msg.RetryCount + 1);
                             }
                         }
                     }
@@ -73,49 +72,41 @@ namespace ECommerceBackend.API.HostedServices
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Outbox processor loop failed");
+                    _logger.LogError(ex, "Outbox relay loop failed");
                 }
 
                 await Task.Delay(_interval, stoppingToken);
             }
         }
 
-        private async Task FulfillOrderAsync(
+        private static async Task SettleAndPublishAsync(
             string payload,
             IStockReservationRepository stockReservation,
             IProductRepository productRepo,
             IOrderRepository orderRepo,
-            ICheckoutService checkoutService,
-            IEmailService emailService,
-            IOrderedItemService orderedItemService)
+            IFulfillmentPublisher publisher,
+            CancellationToken cancellationToken)
         {
             var orderId = JsonSerializer.Deserialize<OrderConfirmedPayload>(payload)!.OrderId;
             var order = await orderRepo.GetByIdAsync(orderId);
             if (order == null) return;
 
-            // Idempotency: skip if this order was already fulfilled/settled.
+            // Idempotency: skip if this order's stock was already settled.
             if (order.StockSettledAt != null) return;
 
-            // 1. Settle stock: finalize Redis reservation + deduct SQL (source of truth).
+            // 1. Settle stock INLINE: finalize Redis reservation + deduct SQL (fast + critical).
             foreach (var item in order.Items)
             {
                 await stockReservation.ConfirmAsync(orderId, item.ProductId, item.Quantity);
                 await productRepo.TryDeductStockAsync(item.ProductId, item.Quantity);
             }
 
-            // 2. Generate the invoice PDF (slow work — now OFF the request path).
-            var pdfBytes = await checkoutService.GenerateInvoiceForOrderAsync(orderId);
-
-            // 3. Email the invoice.
-            if (!string.IsNullOrWhiteSpace(order.Email))
-                await emailService.SendEmailAsync(_config, pdfBytes: pdfBytes, ReceiverEmail: order.Email);
-
-            // 4. Persist the invoice record.
-            await orderedItemService.HandleInvoice(
-                order.UserId, pdfBytes, order.Items.Count, order.TotalAmount + 30);
-
-            // 5. Mark settled (idempotency guard).
+            // 2. Mark settled (idempotency guard) BEFORE publishing, so a publish retry can't
+            //    re-settle stock. The fulfillment worker has its own idempotency (invoice record).
             await orderRepo.MarkStockSettledAsync(orderId, DateTime.UtcNow);
+
+            // 3. Hand the SLOW work (invoice PDF + email + persist) to Service Bus.
+            await publisher.PublishAsync(new OrderFulfillmentMessage(orderId), cancellationToken);
         }
 
         private record OrderConfirmedPayload(Guid OrderId);

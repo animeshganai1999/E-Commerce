@@ -1,7 +1,10 @@
 ﻿using Azure.Extensions.AspNetCore.Configuration.Secrets;
 using Azure.Identity;
+using Azure.Messaging.ServiceBus;
 using Azure.Storage.Blobs;
+using ECommerceBackend.API.Messaging;
 using ECommerceBackend.Application.Interfaces;
+using ECommerceBackend.Application.Messaging;
 using ECommerceBackend.Application.Options;
 using ECommerceBackend.Application.Services;
 
@@ -89,6 +92,22 @@ builder.Services.AddSingleton(sp =>
     return new BlobServiceClient(options.ConnectionString);
 });
 
+// Azure Service Bus (passwordless via Microsoft Entra ID / Managed Identity).
+// Only the namespace is configured — no connection-string secret.
+builder.Services.AddOptions<AzureServiceBusOptions>()
+    .Bind(builder.Configuration.GetSection(AzureServiceBusOptions.SectionName))
+    .Validate(o => !string.IsNullOrEmpty(o.FullyQualifiedNamespace), "Service Bus namespace is not configured.")
+    .Validate(o => !string.IsNullOrEmpty(o.FulfillmentQueueName), "Service Bus fulfillment queue name is not configured.")
+    .ValidateOnStart();
+
+builder.Services.AddSingleton(sp =>
+{
+    var options = sp.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+    return new ServiceBusClient(options.FullyQualifiedNamespace, new DefaultAzureCredential());
+});
+
+builder.Services.AddScoped<IFulfillmentPublisher, ServiceBusFulfillmentPublisher>();
+
 // Redis connection (Azure Managed Redis - passwordless via Microsoft Entra ID / Managed Identity)
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 {
@@ -168,8 +187,11 @@ builder.Services.AddCors(options =>
 builder.Services.AddExceptionHandler<ECommerceBackend.API.Infrastructure.GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
-// Background outbox processor (crash-safe Redis + SQL stock settlement)
-builder.Services.AddHostedService<ECommerceBackend.API.HostedServices.OutboxProcessorService>();
+// Background outbox relay: settles stock inline, then publishes fulfillment to Service Bus
+builder.Services.AddHostedService<ECommerceBackend.API.HostedServices.OutboxRelayService>();
+
+// Background fulfillment worker: consumes Service Bus -> invoice PDF + email + persist
+builder.Services.AddHostedService<ECommerceBackend.API.HostedServices.FulfillmentWorker>();
 
 // Background reconciliation (self-heals Redis <-> SQL stock drift)
 builder.Services.AddHostedService<ECommerceBackend.API.HostedServices.StockReconciliationService>();

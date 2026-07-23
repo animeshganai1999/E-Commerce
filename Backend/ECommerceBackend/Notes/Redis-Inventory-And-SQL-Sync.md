@@ -1,8 +1,162 @@
 # Notes: Redis Inventory, Outbox Pattern & SQL Sync
 
 > How the scalable checkout system works: Redis for the hot path (reservations),
-> the Outbox pattern for crash-safe settlement, and how everything stays in sync
-> with SQL Server (the durable source of truth).
+> the Outbox pattern for crash-safe capture, **Azure Service Bus** for reliable post-payment
+> fulfillment, and how everything stays in sync with SQL Server (the durable source of truth).
+
+---
+
+## 0. Architecture Overview (full picture)
+
+### 0.1 System component diagram (Mermaid — renders on GitHub)
+
+```mermaid
+flowchart TB
+    subgraph Client["?? Client (React SPA)"]
+        UI["Browser<br/>catalog · cart · checkout"]
+    end
+
+    subgraph API["?? ECommerceBackend.API (ASP.NET Core)"]
+        direction TB
+        Ctrls["Controllers<br/>Products · Cart · Checkout · Payment · Auth"]
+        subgraph BG["Background Hosted Services"]
+            Sweeper["ReservationSweeperService<br/>(30s · lock)"]
+            Relay["OutboxRelayService<br/>(5s · lock)"]
+            Worker["FulfillmentWorker<br/>(Service Bus consumer)"]
+            Recon["StockReconciliationService<br/>(5min · lock)"]
+        end
+    end
+
+    subgraph Azure["?? Azure (passwordless · Entra ID / DefaultAzureCredential)"]
+        direction TB
+        KV["?? Key Vault<br/>JWT · Email · DB · Blob secrets"]
+        Redis[("? Azure Managed Redis<br/>stock · reservations · locks<br/>+ read-caches")]
+        SB["?? Service Bus queue<br/>order-fulfillment"]
+        Blob["??? Blob Storage<br/>invoice PDFs"]
+    end
+
+    subgraph Data["?? Durable Store"]
+        SQL[("SQL Server<br/>Orders · OutboxMessages<br/>Products · Users · Cart")]
+    end
+
+    Email["?? SMTP (Gmail)"]
+
+    UI -->|HTTPS/JWT| Ctrls
+    KV -.->|secrets at startup| API
+    Ctrls -->|reserve / confirm| Redis
+    Ctrls -->|orders · outbox| SQL
+
+    Relay -->|poll unprocessed| SQL
+    Relay -->|settle stock| Redis
+    Relay -->|publish OrderFulfillment| SB
+
+    SB -->|push PeekLock| Worker
+    Worker -->|read order| SQL
+    Worker -->|store PDF| Blob
+    Worker -->|send invoice| Email
+
+    Sweeper -->|reclaim expired| Redis
+    Recon -->|self-heal drift| Redis
+    Recon -->|reconcile| SQL
+
+    Ctrls -->|cache-aside| Redis
+```
+
+### 0.2 Post-payment fulfillment sequence (Mermaid)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant P as PaymentController
+    participant SQL as SQL Server
+    participant R as OutboxRelayService
+    participant Rd as Redis
+    participant SB as Service Bus
+    participant W as FulfillmentWorker
+    participant B as Blob
+    participant E as Email
+
+    U->>P: POST /payment/pay {orderId, success}
+    P->>SQL: TXN — Order=Confirmed + OutboxMessage (atomic)
+    P-->>U: 200 fast (invoice will arrive by email)
+
+    Note over R: every 5s · distributed lock
+    R->>SQL: get unprocessed outbox
+    R->>Rd: settle stock (Confirm + deduct)
+    R->>SQL: MarkStockSettledAt (idempotency guard)
+    R->>SB: publish OrderFulfillment {orderId}
+    R->>SQL: MarkProcessed
+
+    Note over W: event-driven · PeekLock (one consumer)
+    SB-->>W: deliver message (locked)
+    W->>SQL: load persisted Order
+    W->>B: store invoice PDF
+    W->>E: email invoice
+    alt success
+        W->>SB: CompleteMessage (removed)
+    else failure
+        W->>SB: AbandonMessage ? redeliver ? DLQ after 10
+    end
+```
+
+### 0.3 Component + data-flow (ASCII — plain-text fallback)
+
+```
+                        ??????????????????????????????????????????????
+                        ?              CLIENT (React SPA)             ?
+                        ?        catalog · cart · checkout · pay      ?
+                        ??????????????????????????????????????????????
+                                                 ? HTTPS + JWT
+                                                 ?
+ ?????????????????????????????????????????????????????????????????????????????????????
+ ?                          ECommerceBackend.API (ASP.NET Core)                        ?
+ ?                                                                                     ?
+ ?   Controllers:  Products ? Cart ? Checkout ? Payment ? Auth                         ?
+ ?        ?  reserve/confirm            ?  orders + outbox           ? cache-aside      ?
+ ?        ?                             ?                            ?                  ?
+ ?   ???????????????????????? Background Hosted Services ????????????????????????????  ?
+ ?   ?  ReservationSweeper(30s,lock)   OutboxRelay(5s,lock)   Reconciliation(5m,lock)?  ?
+ ?   ?                                 FulfillmentWorker(Service Bus consumer)       ?  ?
+ ?   ???????????????????????????????????????????????????????????????????????????????? ?
+ ??????????????????????????????????????????????????????????????????????????????????????
+     ? secrets @startup       ? stock/reservations  ? orders/outbox         ? publish/consume
+     ?                        ?                     ?                       ?
+ ??????????????        ????????????????      ????????????????       ????????????????????
+ ? Key Vault  ?        ? Azure Managed ?      ?  SQL Server  ?       ?  Service Bus     ?
+ ? (secrets)  ?        ?    Redis      ?      ? Orders/Outbox ?       ? order-fulfillment?
+ ?            ?        ? stock·resv·   ?      ? Products·Cart ?       ?     (queue)      ?
+ ?            ?        ? locks·caches  ?      ? Users         ?       ????????????????????
+ ??????????????        ????????????????      ????????????????                ? push
+                                                                    ?????????????????????
+                                                                    ? FulfillmentWorker ?
+                                                                    ?  PDF · email ·    ?
+                                                                    ?  persist invoice  ?
+                                                                    ?????????????????????
+                                                                        ?           ?
+                                                                  ???????????? ???????????
+                                                                  ?  Blob    ? ?  SMTP   ?
+                                                                  ? (PDFs)   ? ? (email) ?
+                                                                  ???????????? ???????????
+
+ Auth to ALL Azure services = passwordless (DefaultAzureCredential / Managed Identity).
+```
+
+### 0.4 Where to read more
+
+| Concern | Section |
+|---------|---------|
+| Why Redis for stock · Lua atomicity | 1–4 |
+| Idempotency (3 layers) | 5 |
+| Outbox pattern & crash-safety | 6 |
+| End-to-end checkout flow | 7 |
+| Stock values per stage · SQL sync | 8–9 |
+| Scaling · locks · hosted services | 10–12 |
+| Redis keys reference · failures | 13–14 |
+| Read-caches (catalog · cart) | 15–16 |
+| Keyset "Load more" pagination | 17 |
+| Passwordless Azure Managed Redis | 18 |
+| Azure Service Bus fulfillment queue | 19 |
 
 ---
 
@@ -95,8 +249,8 @@ if (order.Status != OrderStatus.Pending) return; // already confirmed
 ```
 
 ### Layer 3 — Settlement-level (`Order.StockSettledAt` guard)
-Stops the outbox processor from double-deducting stock if a message is reprocessed
-(crash before MarkProcessed, or the same message picked up twice).
+Stops the outbox relay from double-deducting stock if a message is reprocessed
+(crash before MarkProcessed, the same message picked up twice, or a Service Bus publish retry).
 ```csharp
 if (order.StockSettledAt != null) return; // already settled
 ```
@@ -127,26 +281,33 @@ commit
 The **intent to settle** is saved atomically with the status. A background **outbox processor**
 then performs the actual Redis confirm + SQL deduction — reliably, with retries.
 
-### The outbox processor (`OutboxProcessorService`, every 5s)
+### The outbox relay (`OutboxRelayService`, every 5s)
+The relay **settles stock inline** (fast + critical) and then **publishes** the slow fulfillment
+work to **Azure Service Bus** (see Section 19). It no longer does the invoice/email itself.
 ```
 GetUnprocessedAsync() -> for each "OrderConfirmed":
     if order.StockSettledAt != null -> skip (idempotent)
-    settle:  Redis ConfirmAsync + SQL TryDeductStockAsync (per item)
-    fulfill: generate invoice PDF (from persisted Order) + email + save invoice record
-    MarkStockSettledAsync(order)   -> StockSettledAt = now
-    MarkProcessedAsync(message)    -> ProcessedAt = now
+    settle:   Redis ConfirmAsync + SQL TryDeductStockAsync (per item)
+    mark:     MarkStockSettledAsync(order)  -> StockSettledAt = now  (BEFORE publish)
+    publish:  Service Bus "order-fulfillment" { orderId }
+    MarkProcessedAsync(message)  -> ProcessedAt = now
     (on failure -> MarkFailedAsync -> retried next cycle)
 ```
+The **FulfillmentWorker** (Service Bus consumer) then does the slow work: invoice PDF + email +
+save invoice record — with independent retries + automatic dead-lettering (Section 19).
 
 ### Why it's crash-safe
 | Failure point | Result |
 |---------------|--------|
-| Crash after confirm, before settle | Outbox row persists -> poller retries |
-| Poller crashes mid-settle | Message still unprocessed -> retried |
+| Crash after confirm, before settle | Outbox row persists -> relay retries |
+| Relay crashes mid-settle | Message still unprocessed -> retried |
 | Message processed twice | `StockSettledAt` guard -> no double deduction |
+| Settle ok, publish fails | Outbox retries; `StockSettledAt` guard skips re-settle, just re-publishes |
+| Fulfillment (invoice/email) fails | Service Bus redelivers; auto dead-letters after MaxDeliveryCount |
 
-> Migration path: later the poller **publishes** the message to **Azure Service Bus** instead of
-> settling inline; a worker consumes it. Outbox = atomic capture; Service Bus = reliable transport.
+> **Two-stage decoupling now implemented:** Outbox = atomic capture (SQL); the relay settles
+> stock and hands slow fulfillment to **Azure Service Bus** = reliable transport with independent
+> retries + DLQ. See Section 19.
 
 ---
 
@@ -171,10 +332,15 @@ STEP 2 - POST /payment/pay { orderId, success }   (dummy payment for now)
    |
    |-- failure -> ReleaseStockAsync (Redis INCRBY + Order=Cancelled) -> 402
 
-BACKGROUND - OutboxProcessor (every 5s):
+BACKGROUND - OutboxRelayService (every 5s):
    settle stock:  Redis confirm (remove reservation) + SQL Products.StockQuantity -= qty
-   fulfill:       generate invoice PDF (from the persisted Order) + email + save invoice record
    mark:          StockSettledAt + ProcessedAt   (idempotent)
+   publish:       Service Bus queue "order-fulfillment" { orderId }
+         |
+         v
+BACKGROUND - FulfillmentWorker (Service Bus consumer):
+   fulfill:       generate invoice PDF (from the persisted Order) + email + save invoice record
+   (auto retry + dead-letter via Service Bus)
 ```
 
 > The invoice PDF + email now run **in the background worker**, built from the **persisted
@@ -202,7 +368,7 @@ BACKGROUND - OutboxProcessor (every 5s):
 |-----------|------|-----------|
 | SQL -> Redis | Lazy load on cache miss (`-2`) | `GetStockFromSqlAsync` -> `PopulateStockIfAbsentAsync` (NX) |
 | SQL -> Redis | Flash-sale warm-up | `WarmUpAsync` (bulk force-set) |
-| Redis -> SQL | Order settlement | **Outbox processor** -> `TryDeductStockAsync` |
+| Redis -> SQL | Order settlement | **Outbox relay** -> `TryDeductStockAsync` (then publishes fulfillment to Service Bus) |
 | SQL <-> Redis | Periodic reconciliation | (recommended) recompute `stock` from SQL - open reservations |
 
 Consistency is **eventual** — Redis is the fast hot counter, SQL is updated asynchronously via
@@ -254,7 +420,8 @@ All use `CreateScope()` per iteration (singleton service -> scoped repositories)
 | Service | Interval | Lock key | Job |
 |---------|----------|----------|-----|
 | `ReservationSweeperService` | 30s | `lock:reservation-sweeper` | Reclaim expired reservations (ZRANGEBYSCORE -> INCRBY stock) |
-| `OutboxProcessorService` | 5s | `lock:outbox-processor` | Fulfill confirmed orders: settle stock + invoice PDF + email |
+| `OutboxRelayService` | 5s | `lock:outbox-processor` | Settle stock (Redis + SQL) then **publish** fulfillment to Service Bus |
+| `FulfillmentWorker` | event-driven | (Service Bus lease) | Consume `order-fulfillment` queue: invoice PDF + email + persist |
 | `StockReconciliationService` | 5min | `lock:stock-reconciliation` | Self-heal Redis<->SQL drift + fail expired Pending orders |
 
 ### `ReservationSweeperService`
@@ -262,11 +429,19 @@ All use `CreateScope()` per iteration (singleton service -> scoped repositories)
 - For each: `INCRBY stock` + `DEL reservation` + `ZREM index` (Lua-atomic).
 - Returns stock abandoned mid-checkout.
 
-### `OutboxProcessorService`
+### `OutboxRelayService`
 - Reads unprocessed `OutboxMessages` (skips those with `RetryCount >= 5` = dead-lettered).
-- For each `OrderConfirmed`: guard on `StockSettledAt`, then
-  Redis confirm + SQL `TryDeductStockAsync` + generate invoice PDF + email + save invoice record.
-- `MarkStockSettledAsync` + `MarkProcessedAsync`; on error `MarkFailedAsync` (retried, capped at 5).
+- For each `OrderConfirmed`: guard on `StockSettledAt`, then Redis confirm + SQL
+  `TryDeductStockAsync`, `MarkStockSettledAsync`, then **publish** an `OrderFulfillment` message
+  to Azure Service Bus, then `MarkProcessedAsync`; on error `MarkFailedAsync` (retried, capped at 5).
+- Settling **before** publishing + the `StockSettledAt` guard means a publish retry never
+  re-deducts stock (Section 19).
+
+### `FulfillmentWorker` (Service Bus consumer)
+- A `ServiceBusProcessor` on the `order-fulfillment` queue (event-driven, not polled).
+- For each message: generate invoice PDF (from the persisted Order) + email + save invoice record,
+  then `CompleteMessageAsync`. On failure `AbandonMessageAsync` -> Service Bus redelivers, and
+  auto **dead-letters** after `MaxDeliveryCount` (10). See Section 19.
 
 ### `StockReconciliationService`
 - Enforces invariant: `Redis stock = SQL StockQuantity - SUM(open Pending reservations)`.
@@ -321,9 +496,11 @@ All use `CreateScope()` per iteration (singleton service -> scoped repositories)
 |----------|--------------|
 | App crash mid-reserve | Lua atomicity -> all 3 writes or none (no leak) |
 | User abandons checkout | TTL passes -> sweeper `INCRBY` returns stock |
-| Payment/email fails | `ReleaseAsync` returns stock immediately |
-| Crash after confirm, before settle | Outbox row persists -> poller retries (no drift) |
+| Payment/email fails | `ReleaseAsync` returns stock immediately (payment); email failure -> Service Bus retries then DLQ |
+| Crash after confirm, before settle | Outbox row persists -> relay retries (no drift) |
 | Outbox processed twice | `StockSettledAt` guard -> no double deduction |
+| Settle ok but Service Bus publish fails | Outbox retries; `StockSettledAt` skips re-settle, just re-publishes |
+| Fulfillment (invoice/email) fails repeatedly | Service Bus dead-letters after MaxDeliveryCount (10) |
 | Duplicate checkout request | Idempotency key -> replay cached response |
 | Redis restarts (data lost) | Lazy load re-populates from SQL; reconciliation re-aligns held counts |
 | Redis key evicted (LRU) while reserved | Reconciliation recomputes `SQL - open reservations` |
@@ -642,6 +819,100 @@ healthChecks.AddRedis(sp => sp.GetRequiredService<IConnectionMultiplexer>(), nam
 
 ---
 
+## 19. Azure Service Bus — Post-Payment Fulfillment Queue (passwordless)
+
+A **message queue** now sits **between** the fast/critical settlement and the slow fulfillment
+work. This decouples the invoice PDF + email (slow, externally-dependent) from stock settlement
+(fast, must-be-correct), so a flaky email provider can never block inventory or the checkout
+response.
+
+### The split (Outbox -> relay -> Service Bus -> worker)
+```
+/payment/pay (success)
+   -> ConfirmStockAsync : SQL txn { Order=Confirmed + OutboxMessage }   (atomic capture)
+          |
+   OutboxRelayService (polls SQL every 5s, distributed-locked):
+      1. settle stock INLINE  (Redis Confirm + SQL deduct)   <- fast + critical, stays here
+      2. MarkStockSettledAt   (idempotency guard)
+      3. publish -> Service Bus queue "order-fulfillment" { orderId }
+          |
+   [ Azure Service Bus queue: order-fulfillment ]
+          |
+   FulfillmentWorker (ServiceBusProcessor, event-driven):
+      4. generate invoice PDF
+      5. send email
+      6. persist invoice record
+      (Complete on success; Abandon on failure -> redelivery -> DLQ after MaxDeliveryCount)
+```
+
+### Why keep the Outbox *and* add Service Bus
+- **Outbox** guarantees the fulfillment intent is captured **atomically** with `Order=Confirmed`
+  in the **same SQL transaction** — no lost events if the app crashes right after commit.
+- **Service Bus** is the **reliable transport** for the slow work: independent retries, automatic
+  **dead-letter queue**, and independent scaling of the consumer. The relay is just the bridge
+  (SQL outbox -> broker).
+- This is the exact "migration path" the Outbox section always pointed to — now implemented.
+
+### Why stock settlement stays inline (not queued)
+Settlement (Redis + SQL) is **fast and correctness-critical**. Keeping it in the relay means the
+`stock:{id}` / SQL truth is finalized deterministically under the distributed lock, before any
+message leaves. Only the **slow, retry-prone** work (PDF + external email) goes on the queue.
+
+### Idempotency across the queue (at-least-once safe)
+Service Bus delivers **at-least-once**, so the worker may run twice for one order. Safe because:
+- Stock is settled **before** publish and guarded by `StockSettledAt` (Section 5, Layer 3) — a
+  publish retry re-sends the message but never re-deducts stock.
+- The message's `MessageId = orderId` gives a natural de-dupe / trace key.
+- Fulfillment work is derived from the **persisted Order** (deterministic), so a rare double
+  invoice/email is the worst case — not data corruption. (A processed-invoice guard can be added
+  if strict once-only email is required.)
+
+### Passwordless connection (Entra ID)
+Consistent with Key Vault + Azure Managed Redis — **no connection string**. Only the namespace is
+configured; auth is `DefaultAzureCredential`:
+```json
+"AzureServiceBus": {
+  "FullyQualifiedNamespace": "ecommerce-sb-animesh.servicebus.windows.net",
+  "FulfillmentQueueName": "order-fulfillment"
+}
+```
+```csharp
+// Program.cs — singleton client, passwordless
+builder.Services.AddSingleton(sp =>
+{
+    var o = sp.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+    return new ServiceBusClient(o.FullyQualifiedNamespace, new DefaultAzureCredential());
+});
+builder.Services.AddScoped<IFulfillmentPublisher, ServiceBusFulfillmentPublisher>();
+```
+**Required RBAC:** assign the identity **Azure Service Bus Data Owner** on the namespace
+(local dev = your `az login` user; Azure = the app's Managed Identity). Being subscription Owner
+is control-plane only and does **not** grant data-plane send/receive.
+
+### Components
+| Piece | Layer | Role |
+|-------|-------|------|
+| `AzureServiceBusOptions` | Application | Namespace + queue name (no secret) |
+| `OrderFulfillmentMessage` | Application | Message contract (`OrderId`) |
+| `IFulfillmentPublisher` | Application | Transport abstraction (testable) |
+| `ServiceBusFulfillmentPublisher` | API | `ServiceBusSender` impl (passwordless) |
+| `OutboxRelayService` | API (hosted) | Settle inline + publish |
+| `FulfillmentWorker` | API (hosted) | `ServiceBusProcessor` -> invoice + email + persist |
+
+### Queue settings (provisioned)
+| Setting | Value | Note |
+|---------|-------|------|
+| Namespace | `ecommerce-sb-animesh` | **Basic** tier (queues only; topics need Standard) |
+| Queue | `order-fulfillment` | Active |
+| Max delivery count | `10` | Auto dead-letters after 10 failed deliveries |
+| Auth | Entra ID (Data Owner) | Passwordless; no SAS connection string |
+
+> **Tier note:** Basic supports **queues** (enough for this single-queue design). If you later
+> split into per-step **topics + subscriptions** (settle / invoice / email as separate consumers),
+> upgrade the namespace to **Standard**.
+
+---
+
 ## Key Takeaways
 1. **Redis = hot working counter** (helps at RESERVE); **SQL = durable truth**.
 2. **Reserve** is the only high-concurrency point -> Redis Lua atomic prevents oversell.
@@ -668,3 +939,7 @@ healthChecks.AddRedis(sp => sp.GetRequiredService<IConnectionMultiplexer>(), nam
     (`DefaultAzureCredential`, port 10000 + TLS, `Microsoft.Azure.StackExchangeRedis`). Access keys
     are **disabled**; only the non-secret `Redis:HostName` is configured. Needs a **Data Owner**
     access-policy assignment on the cache (Owner/IAM is control-plane only). See Section 18.
+15. **Service Bus fulfillment queue**: the outbox **relay** settles stock inline then **publishes**
+    to Azure Service Bus (`order-fulfillment`); the **FulfillmentWorker** consumes it for invoice +
+    email + persist — independent retries + auto dead-letter. Passwordless (Entra ID, **Data
+    Owner**), Outbox stays as the atomic capture. See Section 19.

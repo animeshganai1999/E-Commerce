@@ -1,4 +1,5 @@
 ﻿using ECommerceBackend.Application.Interfaces;
+using ECommerceBackend.Application.Exceptions;
 using ECommerceBackend.Application.Models;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
@@ -14,44 +15,122 @@ namespace ECommerceBackend.Application.Services
 {
     public class CheckoutService : ICheckoutService
     {
+        // How long a reservation is held in Redis while the user pays (mirrored on the order).
+        private static readonly TimeSpan ReservationWindow = TimeSpan.FromMinutes(15);
+
         ICartRepository _cartRepository;
         private readonly IOrderRepository _orderRepository;
         private readonly IStockReservationRepository _stockReservation;
         private readonly IOutboxRepository _outboxRepository;
+        private readonly IProductRepository _productRepository;
 
         public CheckoutService(
             ICartRepository cartRepository,
             IOrderRepository orderRepository,
             IStockReservationRepository stockReservation,
-            IOutboxRepository outboxRepository)
+            IOutboxRepository outboxRepository,
+            IProductRepository productRepository)
         {
             _cartRepository = cartRepository;
             _orderRepository = orderRepository;
             _stockReservation = stockReservation;
             _outboxRepository = outboxRepository;
+            _productRepository = productRepository;
         }
-        public async Task<List<OrderItem>> FetchAllIetmsAsync(Guid userId)
-        {
-            // Fetch the cart items for the given user ID
-            var cartItems = await _cartRepository.GetCartByUserIdAsync(userId);
-            if (cartItems == null || !cartItems.Any())
-                throw new Exception("No items found in the cart.");
-            // Map the cart items to OrderItem
-            var orderItems = cartItems.Select(item => new OrderItem
-            {
-                Description = item.Description,
-                Quantity = item.Quantity,
-                UnitPrice = item.UnitPrice,
-                TotalPrice = item.Quantity * item.UnitPrice
-            }).ToList();
-            return orderItems;
-        }
-        public async Task<byte[]> GenerateInvoiceAsync(InvoiceDataModel model)
-        {
-            // Fetch the order items asynchronously
-            List<OrderItem> orderItems = await FetchAllIetmsAsync(model.UserId);
 
-            return BuildInvoicePdf(model.OrderDetails, orderItems);
+        public async Task<BeginCheckoutResult> BeginCheckoutAsync(BeginCheckoutModel model)
+        {
+            // 1. Load the user's cart (source of the items to reserve + price snapshot).
+            var cartItems = (await _cartRepository.GetCartByUserIdAsync(model.UserId)).ToList();
+            if (cartItems.Count == 0)
+                throw new Exception("No items found in the cart.");
+
+            var orderId = Guid.NewGuid();
+            var now = DateTime.UtcNow;
+            var expiresAt = now.Add(ReservationWindow);
+            var reserved = new List<CartItem>();
+
+            try
+            {
+                // 2. Reserve each line in Redis (the hot path). Lazy-load the stock key from SQL
+                //    on a miss, then retry once so cold/evicted products still reserve correctly.
+                foreach (var item in cartItems)
+                {
+                    var result = await _stockReservation.TryReserveAsync(
+                        orderId, item.ProductId, item.Quantity, ReservationWindow);
+
+                    if (result == ReserveResult.StockMissing)
+                    {
+                        var sqlStock = await _productRepository.GetStockFromSqlAsync(item.ProductId);
+                        if (sqlStock.HasValue)
+                        {
+                            await _stockReservation.PopulateStockIfAbsentAsync(item.ProductId, sqlStock.Value);
+                            result = await _stockReservation.TryReserveAsync(
+                                orderId, item.ProductId, item.Quantity, ReservationWindow);
+                        }
+                    }
+
+                    if (result != ReserveResult.Success)
+                        throw new InsufficientStockException(item.ProductId, item.Quantity);
+
+                    reserved.Add(item);
+                }
+            }
+            catch
+            {
+                // 3. Roll back any reservations already taken so stock isn't leaked on a partial fail.
+                foreach (var item in reserved)
+                    await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
+                throw;
+            }
+
+            // 4. Persist a Pending order with a billing snapshot (used later by the fulfillment worker).
+            var details = model.OrderDetails;
+            var order = new Order
+            {
+                Id = orderId,
+                UserId = model.UserId,
+                Status = OrderStatus.Pending,
+                CreatedAt = now,
+                ReservationExpiresAt = expiresAt,
+                TotalAmount = cartItems.Sum(i => i.UnitPrice * i.Quantity),
+                FirstName = details.FirstName,
+                LastName = details.LastName,
+                Email = details.Email,
+                Address = details.Address,
+                Address2 = details.Address2,
+                Country = details.Country,
+                State = details.State,
+                Zip = details.Zip,
+                Items = cartItems.Select(i => new OrderLineItem
+                {
+                    OrderId = orderId,
+                    ProductId = i.ProductId,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice,
+                    Description = i.Description
+                }).ToList()
+            };
+
+            try
+            {
+                await _orderRepository.AddAsync(order);
+                await _orderRepository.SaveChangesAsync();
+            }
+            catch
+            {
+                // Order persistence failed after reserving — release the held stock.
+                foreach (var item in reserved)
+                    await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
+                throw;
+            }
+
+            return new BeginCheckoutResult
+            {
+                OrderId = orderId,
+                TotalAmount = order.TotalAmount,
+                ReservationExpiresAt = expiresAt
+            };
         }
 
         public async Task<byte[]> GenerateInvoiceForOrderAsync(Guid orderId)

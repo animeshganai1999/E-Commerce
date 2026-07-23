@@ -1,7 +1,6 @@
 ﻿using ECommerceBackend.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace ECommerceBackend.API.Controllers
@@ -18,7 +17,6 @@ namespace ECommerceBackend.API.Controllers
 
         [Authorize]
         [HttpGet("get-invoice")]
-        [EnableRateLimiting("api")]
         public async Task<IActionResult> GetInvoiceByUserId([FromQuery] Guid userId)
         {
             // Extract userId from JWT claims
