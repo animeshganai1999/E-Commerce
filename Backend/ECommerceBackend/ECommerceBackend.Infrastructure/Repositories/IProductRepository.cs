@@ -17,6 +17,16 @@ namespace ECommerceBackend.Infrastructure.Repositories
         /// Optionally filtered by category.</summary>
         Task<(List<Product> Items, int TotalCount)> GetProductsPageAsync(int page, int pageSize, string? category = null);
 
+        /// <summary>
+        /// Keyset (seek) pagination for "Load more" experiences. Returns up to
+        /// <paramref name="pageSize"/> products whose Id is greater than
+        /// <paramref name="afterId"/> (or from the start when afterId is null),
+        /// plus the cursor (last Id) to request the next batch. Scales to deep
+        /// pagination because it seeks via the (Category, Id) index instead of
+        /// counting through skipped rows.
+        /// </summary>
+        Task<(List<Product> Items, int? NextCursor)> GetProductsByCursorAsync(int? afterId, int pageSize, string? category = null);
+
         /// <summary>Returns a single product by id (read-only, no tracking), or null.</summary>
         Task<Product?> GetProductByIdAsync(int id);
         Task<int?> GetStockFromSqlAsync(int productId);

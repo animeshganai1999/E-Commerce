@@ -20,6 +20,10 @@ namespace ECommerceBackend.Infrastructure.Repositories
             $"cache:products:page:{(string.IsNullOrWhiteSpace(category) ? "all" : category)}:{page}:{pageSize}";
         private static string IdKey(int id) => $"cache:products:{id}";
 
+        // Cursor keys use the "afterId" (or "start" for the first batch) instead of a page number.
+        private static string CursorKey(int? afterId, int pageSize, string? category) =>
+            $"cache:products:cursor:{(string.IsNullOrWhiteSpace(category) ? "all" : category)}:{(afterId?.ToString() ?? "start")}:{pageSize}";
+
         public ProductCache(IConnectionMultiplexer redis)
         {
             _db = redis.GetDatabase();
@@ -40,6 +44,23 @@ namespace ECommerceBackend.Infrastructure.Repositories
         {
             var payload = JsonSerializer.Serialize(new PageEnvelope(items.ToList(), totalCount));
             await _db.StringSetAsync(PageKey(page, pageSize, category), payload, Ttl);
+        }
+
+        private sealed record CursorEnvelope(List<Product> Items, int? NextCursor);
+
+        public async Task<(List<Product> Items, int? NextCursor)?> GetCursorAsync(int? afterId, int pageSize, string? category = null)
+        {
+            var value = await _db.StringGetAsync(CursorKey(afterId, pageSize, category));
+            if (value.IsNullOrEmpty) return null;
+
+            var envelope = JsonSerializer.Deserialize<CursorEnvelope>(value!);
+            return envelope is null ? null : (envelope.Items, envelope.NextCursor);
+        }
+
+        public async Task SetCursorAsync(int? afterId, int pageSize, IEnumerable<Product> items, int? nextCursor, string? category = null)
+        {
+            var payload = JsonSerializer.Serialize(new CursorEnvelope(items.ToList(), nextCursor));
+            await _db.StringSetAsync(CursorKey(afterId, pageSize, category), payload, Ttl);
         }
 
         public async Task<Product?> GetByIdAsync(int id)

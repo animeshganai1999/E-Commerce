@@ -39,6 +39,26 @@ namespace ECommerceBackend.API.Controllers
             return Ok(response);
         }
 
+        // "Load more" catalog endpoint — keyset (seek) pagination. Pass the "afterId" returned
+        // as "nextCursor" from the previous call to fetch the next batch. Performance stays
+        // constant regardless of depth (unlike OFFSET-based paging).
+        [HttpGet("feed")]
+        public async Task<IActionResult> GetFeed(
+            [FromQuery] int? afterId = null,
+            [FromQuery] int pageSize = 20,
+            [FromQuery] string? category = null)
+        {
+            var result = await _productService.GetProductsByCursorAsync(afterId, pageSize, category);
+            var response = new
+            {
+                Items = _mapper.Map<IEnumerable<ProductResponseDTO>>(result.Items),
+                result.NextCursor,
+                result.HasMore,
+                result.PageSize
+            };
+            return Ok(response);
+        }
+
         [HttpGet("{id:int}")]
         public async Task<IActionResult> GetById(int id)
         {

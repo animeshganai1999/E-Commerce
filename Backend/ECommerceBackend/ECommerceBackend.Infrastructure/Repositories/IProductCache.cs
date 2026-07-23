@@ -10,6 +10,11 @@ namespace ECommerceBackend.Infrastructure.Repositories
         Task<(List<Product> Items, int TotalCount)?> GetPageAsync(int page, int pageSize, string? category = null);
         Task SetPageAsync(int page, int pageSize, IEnumerable<Product> items, int totalCount, string? category = null);
 
+        // Cursor (keyset) caching for "Load more". Keyed by the cursor (afterId) instead of a
+        // page number, so it stays consistent regardless of how deep the client scrolls.
+        Task<(List<Product> Items, int? NextCursor)?> GetCursorAsync(int? afterId, int pageSize, string? category = null);
+        Task SetCursorAsync(int? afterId, int pageSize, IEnumerable<Product> items, int? nextCursor, string? category = null);
+
         Task<Product?> GetByIdAsync(int id);
         Task SetByIdAsync(Product product);
 

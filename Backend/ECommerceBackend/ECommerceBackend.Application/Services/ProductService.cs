@@ -55,6 +55,37 @@ namespace ECommerceBackend.Application.Services
                 PageSize = pageSize
             };
 
+        public async Task<CursorResult<Product>> GetProductsByCursorAsync(int? afterId, int pageSize, string? category = null)
+        {
+            if (pageSize < 1) pageSize = DefaultPageSize;
+            if (pageSize > MaxPageSize) pageSize = MaxPageSize;
+            if (afterId < 0) afterId = null;
+
+            // Same normalization as the offset path so cache keys and DB filters line up.
+            category = string.IsNullOrWhiteSpace(category) ? null : category.Trim().ToLowerInvariant();
+
+            var cached = await _cache.GetCursorAsync(afterId, pageSize, category);
+            if (cached is not null)
+            {
+                return new CursorResult<Product>
+                {
+                    Items = cached.Value.Items,
+                    NextCursor = cached.Value.NextCursor,
+                    PageSize = pageSize
+                };
+            }
+
+            var (items, nextCursor) = await _productRepository.GetProductsByCursorAsync(afterId, pageSize, category);
+            await _cache.SetCursorAsync(afterId, pageSize, items, nextCursor, category);
+
+            return new CursorResult<Product>
+            {
+                Items = items,
+                NextCursor = nextCursor,
+                PageSize = pageSize
+            };
+        }
+
         public async Task<Product?> GetProductByIdAsync(int id)
         {
             var cached = await _cache.GetByIdAsync(id);
