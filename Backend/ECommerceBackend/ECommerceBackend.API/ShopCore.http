@@ -1,0 +1,118 @@
+### =========================================================================
+### ShopCore API - End-to-End Checkout Test
+### Run each request top-to-bottom by clicking "Send Request" above it.
+### Requires the API running (http profile => http://localhost:5274).
+### =========================================================================
+
+@baseUrl = http://localhost:5274
+@contentType = application/json
+
+### -------------------------------------------------------------------------
+### 1. Register a new user (skip if you already have one -> go to Login)
+### -------------------------------------------------------------------------
+# @name register
+POST {{baseUrl}}/api/auth/register
+Content-Type: {{contentType}}
+
+{
+  "Name": "Test User",
+  "Email": "testuser@example.com",
+  "Password": "Test@12345"
+}
+
+### -------------------------------------------------------------------------
+### 2. Login -> captures the AccessToken + UserId for the calls below
+### -------------------------------------------------------------------------
+# @name login
+POST {{baseUrl}}/api/auth/login
+Content-Type: {{contentType}}
+
+{
+  "Email": "testuser@example.com",
+  "Password": "Test@12345"
+}
+
+### Grab token + userId from the login response above
+@token = {{login.response.body.AccessToken}}
+@userId = {{login.response.body.UserId}}
+
+### -------------------------------------------------------------------------
+### 3. Browse the catalog -> find a real ProductId to buy
+### -------------------------------------------------------------------------
+GET {{baseUrl}}/api/products?page=1&pageSize=10
+
+### -------------------------------------------------------------------------
+### 4. Add an item to the cart
+###    Replace ProductId / UnitPrice / Description with a real product from step 3.
+### -------------------------------------------------------------------------
+POST {{baseUrl}}/api/cart/update
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "UserId": "{{userId}}",
+  "Added": [
+    {
+      "ProductId": 1,
+      "Description": "Sample Product",
+      "Quantity": 1,
+      "UnitPrice": 499.00,
+      "UserId": "{{userId}}"
+    }
+  ],
+  "Updated": [],
+  "Removed": []
+}
+
+### -------------------------------------------------------------------------
+### 5. STEP 1 - Begin checkout (reserve stock + create Pending order)
+###    NOTE the required Idempotency-Key header. Captures the returned OrderId.
+### -------------------------------------------------------------------------
+# @name begin
+POST {{baseUrl}}/api/checkout/begin
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+Idempotency-Key: test-order-0001
+
+{
+  "UserId": "{{userId}}",
+  "OrderDetails": {
+    "FirstName": "Test",
+    "LastName": "User",
+    "Email": "testuser@example.com",
+    "Address": "123 Main St",
+    "Address2": "",
+    "Country": "India",
+    "State": "WB",
+    "Zip": "700001"
+  }
+}
+
+### Grab the created OrderId
+@orderId = {{begin.response.body.OrderId}}
+
+### -------------------------------------------------------------------------
+### 6. STEP 2 - Pay (success) -> confirms order + enqueues fulfillment
+###    Set "Success": false to instead test stock release (returns 402).
+### -------------------------------------------------------------------------
+POST {{baseUrl}}/api/payment/pay
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "OrderId": "{{orderId}}",
+  "Success": true
+}
+
+### -------------------------------------------------------------------------
+### 7. After ~5-10s, the OutboxRelayService settles stock + publishes to
+###    Service Bus, and the FulfillmentWorker emails + stores the invoice.
+###    Verify the invoice was persisted:
+### -------------------------------------------------------------------------
+GET {{baseUrl}}/api/orderedItems/get-invoice?userId={{userId}}
+Authorization: Bearer {{token}}
+
+### -------------------------------------------------------------------------
+### 8. (Optional) Health check - SQL + Redis
+### -------------------------------------------------------------------------
+GET {{baseUrl}}/health
