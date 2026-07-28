@@ -15,18 +15,25 @@ namespace ECommerceBackend.Infrastructure.Repositories
             _db = redis.GetDatabase();
         }
 
-        // ---- RESERVE: atomic dual write ----
+        // Hash-tagged keys so a product's stock counter and its reservation land in the SAME
+        // Redis Cluster slot (Azure Managed Redis runs clustered). Redis hashes only on the
+        // "{productId}" tag, which makes multi-key Lua scripts over these two keys legal.
+        // The shared "reservations:index" ZSET can't co-locate with every product, so its
+        // ZADD/ZREM are done as separate single-key calls (cluster-safe) outside the scripts.
+        private static RedisKey StockKey(int productId) => (RedisKey)$"stock:{{{productId}}}";
+        private static RedisKey ReservationKey(Guid orderId, int productId)
+            => (RedisKey)$"reservation:{{{productId}}}:{orderId}";
+
+        // ---- RESERVE: atomic stock check + decrement + reservation (same slot) ----
         // KEYS[1] = stock:{productId}
-        // KEYS[2] = reservation:{orderId}:{productId}   (functional key)
-        // KEYS[3] = reservations:index                  (ZSET)
-        // ARGV[1] = qty, ARGV[2] = ttlSeconds, ARGV[3] = expiryUnix, ARGV[4] = member
+        // KEYS[2] = reservation:{productId}:{orderId}   (functional key)
+        // ARGV[1] = qty, ARGV[2] = ttlSeconds
         private const string ReserveScript = @"
             local stock = tonumber(redis.call('GET', KEYS[1]))
             if stock == nil then return -2 end
             if stock < tonumber(ARGV[1]) then return -1 end
             redis.call('DECRBY', KEYS[1], ARGV[1])
             redis.call('SET', KEYS[2], ARGV[1], 'EX', tonumber(ARGV[2]))
-            redis.call('ZADD', KEYS[3], tonumber(ARGV[3]), ARGV[4])
             return 1";
 
         public async Task<ReserveResult> TryReserveAsync(Guid orderId, int productId, int quantity, TimeSpan ttl)
@@ -38,17 +45,18 @@ namespace ECommerceBackend.Infrastructure.Repositories
                 ReserveScript,
                 new RedisKey[]
                 {
-                    $"stock:{productId}",
-                    $"reservation:{orderId}:{productId}",
-                    IndexKey
+                    StockKey(productId),
+                    ReservationKey(orderId, productId)
                 },
                 new RedisValue[]
                 {
                     quantity,
-                    (long)ttl.TotalSeconds,
-                    expiryUnix,
-                    member
+                    (long)ttl.TotalSeconds
                 });
+
+            // Track expiry in the global ZSET (single-key op -> cluster-safe) only on success.
+            if (result == 1)
+                await _db.SortedSetAddAsync(IndexKey, member, expiryUnix);
 
             return result switch
             {
@@ -59,32 +67,21 @@ namespace ECommerceBackend.Infrastructure.Repositories
         }
 
         // ---- CONFIRM: reservation becomes permanent, remove from expiry queue ----
-        // KEYS[1] = reservation:{orderId}:{productId}
-        // KEYS[2] = reservations:index
-        // ARGV[1] = member
-        private const string ConfirmScript = @"
-            redis.call('DEL', KEYS[1])
-            redis.call('ZREM', KEYS[2], ARGV[1])
-            return 1";
-
         public async Task ConfirmAsync(Guid orderId, int productId, int quantity)
         {
             var member = $"{orderId}:{productId}:{quantity}";
-            await _db.ScriptEvaluateAsync(
-                ConfirmScript,
-                new RedisKey[] { $"reservation:{orderId}:{productId}", IndexKey },
-                new RedisValue[] { member });
+            // Single-key ops (different slots on cluster) -> issue separately.
+            await _db.KeyDeleteAsync(ReservationKey(orderId, productId));
+            await _db.SortedSetRemoveAsync(IndexKey, member);
         }
 
         // ---- RELEASE: return stock + cleanup (payment failed / cancelled) ----
         // KEYS[1] = stock:{productId}
-        // KEYS[2] = reservation:{orderId}:{productId}
-        // KEYS[3] = reservations:index
-        // ARGV[1] = qty, ARGV[2] = member
+        // KEYS[2] = reservation:{productId}:{orderId}
+        // ARGV[1] = qty
         private const string ReleaseScript = @"
             redis.call('INCRBY', KEYS[1], tonumber(ARGV[1]))
             redis.call('DEL', KEYS[2])
-            redis.call('ZREM', KEYS[3], ARGV[2])
             return 1";
 
         public async Task ReleaseAsync(Guid orderId, int productId, int quantity)
@@ -94,11 +91,13 @@ namespace ECommerceBackend.Infrastructure.Repositories
                 ReleaseScript,
                 new RedisKey[]
                 {
-                    $"stock:{productId}",
-                    $"reservation:{orderId}:{productId}",
-                    IndexKey
+                    StockKey(productId),
+                    ReservationKey(orderId, productId)
                 },
-                new RedisValue[] { quantity, member });
+                new RedisValue[] { quantity });
+
+            // Remove from the global ZSET separately (cluster-safe single-key op).
+            await _db.SortedSetRemoveAsync(IndexKey, member);
         }
 
         // ===== RECLAIM (no lock — sweeper service coordinates) =====
@@ -125,11 +124,12 @@ namespace ECommerceBackend.Infrastructure.Repositories
                     ReleaseScript,
                     new RedisKey[]
                     {
-                        $"stock:{productId}",
-                        $"reservation:{orderId}:{productId}",
-                        IndexKey
+                        StockKey(int.Parse(productId)),
+                        ReservationKey(Guid.Parse(orderId), int.Parse(productId))
                     },
-                    new RedisValue[] { qty, member });
+                    new RedisValue[] { qty });
+
+                await _db.SortedSetRemoveAsync(IndexKey, member);
 
                 reclaimed++;
             }
@@ -165,7 +165,7 @@ namespace ECommerceBackend.Infrastructure.Repositories
         public async Task PopulateStockIfAbsentAsync(int productId, int quantity, TimeSpan? idleTtl = null)
         {
             await _db.StringSetAsync(
-                $"stock:{productId}", quantity,
+                StockKey(productId), quantity,
                 expiry: idleTtl,                 // null = no expiry; or e.g. 6h for cold eviction
                 when: When.NotExists);           // don't clobber a live counter
         }
@@ -176,25 +176,25 @@ namespace ECommerceBackend.Infrastructure.Repositories
             var batch = _db.CreateBatch();
             var tasks = new List<Task>();
             foreach (var (id, stock) in items)
-                tasks.Add(batch.StringSetAsync($"stock:{id}", stock));  // no NX — refresh
+                tasks.Add(batch.StringSetAsync(StockKey(id), stock));  // no NX — refresh
             batch.Execute();
             await Task.WhenAll(tasks);
         }
 
         public async Task PreloadStockAsync(int productId, int quantity)
         {
-            await _db.StringSetAsync($"stock:{productId}", quantity);
+            await _db.StringSetAsync(StockKey(productId), quantity);
         }
 
         public async Task<long?> GetStockAsync(int productId)
         {
-            var val = await _db.StringGetAsync($"stock:{productId}");
+            var val = await _db.StringGetAsync(StockKey(productId));
             return val.HasValue ? (long?)val : null;
         }
 
         public async Task SetStockAsync(int productId, int quantity)
         {
-            await _db.StringSetAsync($"stock:{productId}", quantity);
+            await _db.StringSetAsync(StockKey(productId), quantity);
         }
 
         // Enumerate the "hot" product ids currently held in Redis via SCAN (non-blocking).
@@ -209,12 +209,24 @@ namespace ECommerceBackend.Infrastructure.Repositories
 
                 foreach (var key in server.Keys(database: _db.Database, pattern: "stock:*", pageSize: 500))
                 {
-                    var s = ((string)key!).Substring("stock:".Length);
+                    // Keys are hash-tagged as "stock:{id}" -> strip the braces to parse the id.
+                    var s = ((string)key!).Substring("stock:".Length).Trim('{', '}');
                     if (int.TryParse(s, out int id))
                         ids.Add(id);
                 }
             }
             return Task.FromResult(ids);
+        }
+
+        // DEV/TEST ONLY: flush all master nodes so a load test starts from a clean slate.
+        public async Task FlushAllAsync()
+        {
+            foreach (var endpoint in _redis.GetEndPoints())
+            {
+                var server = _redis.GetServer(endpoint);
+                if (!server.IsConnected || server.IsReplica) continue;
+                await server.FlushDatabaseAsync(_db.Database);
+            }
         }
     }
 }

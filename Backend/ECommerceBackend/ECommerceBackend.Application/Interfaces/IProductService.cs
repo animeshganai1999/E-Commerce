@@ -12,5 +12,9 @@ namespace ECommerceBackend.Application.Interfaces
 
         Task<Product?> GetProductByIdAsync(int id);
         Task WarmUpProductsAsync(IEnumerable<int> productIds);
+
+        // DEV/TEST ONLY: flush Redis then re-seed every product's stock from SQL.
+        // Returns the number of products re-warmed. Never expose in production.
+        Task<int> ResetStockAsync();
     }
 }

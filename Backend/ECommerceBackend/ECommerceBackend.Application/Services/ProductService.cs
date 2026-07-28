@@ -108,5 +108,18 @@ namespace ECommerceBackend.Application.Services
             // Invalidate cached catalog entries so refreshed data is re-read from SQL.
             await _cache.InvalidateAsync(ids);
         }
+
+        public async Task<int> ResetStockAsync()
+        {
+            // 1. Wipe all reservation/stock/cache/lock state for a clean baseline.
+            await _stockReservation.FlushAllAsync();
+
+            // 2. Re-seed every product's stock:{id} counter from the SQL source of truth.
+            var products = (await _productRepository.GetAllProductsAsync()).ToList();
+            var stocks = products.Select(p => (p.Id, p.StockQuantity)).ToList();
+            await _stockReservation.WarmUpAsync(stocks);
+
+            return stocks.Count;
+        }
     }
 }

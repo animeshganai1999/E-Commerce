@@ -157,6 +157,7 @@ sequenceDiagram
 | Keyset "Load more" pagination | 17 |
 | Passwordless Azure Managed Redis | 18 |
 | Azure Service Bus fulfillment queue | 19 |
+| Redis Cluster compatibility (hash tags · single-slot Lua) | 20 |
 
 ---
 
@@ -913,6 +914,139 @@ is control-plane only and does **not** grant data-plane send/receive.
 
 ---
 
+## 20. Redis Cluster Compatibility (hash tags + single-slot Lua)
+
+Azure Managed Redis runs in **clustered mode**: the keyspace is sharded across multiple master
+nodes by **hash slot** (`slot = CRC16(key) % 16384`). This adds one hard rule that a single-node
+Redis (e.g. local `localhost:6379`) never enforces:
+
+> A **Lua script** (or `MULTI`/`EXEC`) may only touch keys that live in the **same hash slot** —
+> because the script runs atomically on **one** node, which can only see the keys it owns.
+
+### 20.1 The failure
+
+The original RESERVE script touched **three** keys in one `EVAL`:
+
+```
+stock:{id}                 -> CRC16 -> some slot -> Node A
+reservation:{orderId}:{id} -> CRC16 -> other slot -> Node B
+reservations:index         -> CRC16 -> other slot -> Node C
+```
+
+Three keys, three slots, three nodes -> Redis rejects it **before running**:
+
+```
+RedisCommandException: Multi-key operations must involve a single slot; keys can use 'hash tags'...
+```
+
+This passed locally (single node = one slot) but failed on the clustered Azure cache — every
+reservation threw.
+
+### 20.2 Fix part 1 — hash tags co-locate a product's keys
+
+Redis hashes only the substring inside `{...}` (a **hash tag**) if present. So we tag the stock and
+reservation keys by **productId**, forcing them into the **same slot**:
+
+```
+stock:{5}                  -> hashes on "5"  ?
+reservation:{5}:{orderId}  -> hashes on "5"  ? same slot -> same node -> Lua is legal
+```
+
+```csharp
+// Hash-tagged keys => a product's stock counter and its reservation share one slot.
+private static RedisKey StockKey(int productId) => (RedisKey)$"stock:{{{productId}}}";
+private static RedisKey ReservationKey(Guid orderId, int productId)
+    => (RedisKey)$"reservation:{{{productId}}}:{orderId}";
+```
+
+> The `{{{productId}}}` interpolation emits the literal braces: `stock:{5}`. We tag by
+> **productId** (not orderId) because the atomic unit is *"check + decrement THIS product's stock
+> and record its reservation"* — both are per-product.
+
+### 20.3 Fix part 2 — the shared ZSET leaves the script
+
+`reservations:index` is a **single global ZSET** but there are **many** products; a key lives in
+exactly one slot, so it can't co-locate with every product. The fix: **take its ZADD/ZREM out of
+the Lua script** and issue them as **separate single-key calls** (a single-key op is always
+cluster-legal — it just routes to whichever node owns that one key).
+
+```csharp
+// RESERVE: stock + reservation atomic in one slot; index updated separately.
+private const string ReserveScript = @"
+    local stock = tonumber(redis.call('GET', KEYS[1]))
+    if stock == nil then return -2 end
+    if stock < tonumber(ARGV[1]) then return -1 end
+    redis.call('DECRBY', KEYS[1], ARGV[1])
+    redis.call('SET', KEYS[2], ARGV[1], 'EX', tonumber(ARGV[2]))
+    return 1";
+
+var result = (long)await _db.ScriptEvaluateAsync(
+    ReserveScript,
+    new RedisKey[] { StockKey(productId), ReservationKey(orderId, productId) }, // same slot
+    new RedisValue[] { quantity, (long)ttl.TotalSeconds });
+
+// Track expiry in the global ZSET (single-key op -> cluster-safe) only on success.
+if (result == 1)
+    await _db.SortedSetAddAsync(IndexKey, member, expiryUnix);
+```
+
+The same split was applied to the other operations:
+
+| Op | In the Lua script (same slot) | Separate single-key call |
+|----|-------------------------------|--------------------------|
+| **RESERVE** | `DECRBY stock:{id}` + `SET reservation:{id}:{orderId}` | `ZADD reservations:index` |
+| **CONFIRM** | *(now two single-key calls)* | `DEL reservation:{id}:{orderId}` + `ZREM index` |
+| **RELEASE** | `INCRBY stock:{id}` + `DEL reservation:{id}:{orderId}` | `ZREM reservations:index` |
+| **RECLAIM** | `INCRBY` + `DEL` (per member, same slot) | `ZREM reservations:index` |
+
+All the plain single-key helpers (`GetStock`, `SetStock`, `WarmUp`, `PopulateStockIfAbsent`,
+`PreloadStock`) now use `StockKey(id)` too, and the `SCAN stock:*` parser strips the `{ }` braces
+to recover the id.
+
+### 20.4 The trade-off (and why it's still correct)
+
+The critical guarantee — **never oversell** — is fully preserved: the stock check + decrement +
+reservation write are still **one atomic script** in a single slot. Only the **expiry-index ZADD**
+is now a separate step, so there is a microscopic window where a reservation exists but isn't yet
+in the index. This is harmless:
+
+- Oversell protection is entirely inside the atomic stock+reservation script.
+- The index is only used by the **sweeper** to reclaim *abandoned* reservations.
+- Any drift is self-healed by the **`StockReconciliationService`** (Section 12), which recomputes
+  `Redis stock = SQL StockQuantity - open Pending reservations`.
+
+> This is the standard, accepted pattern for running a reservation system on **Redis Cluster**:
+> hash-tag the keys that must be mutated atomically together, and demote genuinely cross-shard
+> bookkeeping (a global index) to separate, eventually-consistent single-key writes.
+
+### 20.5 Related: `AllowAdmin` for the dev reset
+
+Server admin commands (`FLUSHDB`, and the `SCAN` used by reconciliation) are node-level, not
+key-routed. `FLUSHDB` in particular is blocked by StackExchange.Redis unless **admin mode** is on.
+The dev-only `POST /api/dev/reset-stock` (flush + re-seed stock from SQL) therefore needs:
+
+```csharp
+// Program.cs — enable admin ops for the dev reset, DEVELOPMENT ONLY.
+configurationOptions.AllowAdmin = builder.Environment.IsDevelopment();
+```
+
+The flush loops every **master** node (a cluster spreads keys across shards; `FLUSHDB` clears only
+the node it's sent to) and skips replicas:
+
+```csharp
+foreach (var endpoint in _redis.GetEndPoints())
+{
+    var server = _redis.GetServer(endpoint);
+    if (!server.IsConnected || server.IsReplica) continue;
+    await server.FlushDatabaseAsync(_db.Database);
+}
+```
+
+Both the endpoint (`IsDevelopment()` guard -> 404 in prod) and `AllowAdmin` (dev-only) keep this
+destructive helper out of production.
+
+---
+
 ## Key Takeaways
 1. **Redis = hot working counter** (helps at RESERVE); **SQL = durable truth**.
 2. **Reserve** is the only high-concurrency point -> Redis Lua atomic prevents oversell.
@@ -943,3 +1077,9 @@ is control-plane only and does **not** grant data-plane send/receive.
     to Azure Service Bus (`order-fulfillment`); the **FulfillmentWorker** consumes it for invoice +
     email + persist — independent retries + auto dead-letter. Passwordless (Entra ID, **Data
     Owner**), Outbox stays as the atomic capture. See Section 19.
+16. **Redis Cluster compatibility**: Azure Managed Redis is clustered, so a Lua script may only
+    touch keys in **one hash slot**. Stock + reservation keys are **hash-tagged** by productId
+    (`stock:{id}`, `reservation:{id}:{orderId}`) to co-locate them for the atomic reserve; the
+    shared `reservations:index` ZSET is updated by **separate single-key calls**. Oversell
+    protection stays atomic; the index is eventually-consistent (self-healed by reconciliation).
+    See Section 20.

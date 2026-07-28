@@ -34,5 +34,9 @@
 
         // Product ids that currently have a stock key in Redis (the "hot" set) — via SCAN.
         Task<List<int>> GetTrackedProductIdsAsync();
+
+        // DEV/TEST ONLY: flush every key on all master nodes (stock, reservations, caches, locks).
+        // Used to get a clean baseline before a load test. Never call in production.
+        Task FlushAllAsync();
     }
 }

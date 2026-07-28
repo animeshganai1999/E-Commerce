@@ -23,19 +23,22 @@ namespace ECommerceBackend.Application.Services
         private readonly IStockReservationRepository _stockReservation;
         private readonly IOutboxRepository _outboxRepository;
         private readonly IProductRepository _productRepository;
+        private readonly ICartCache _cartCache;
 
         public CheckoutService(
             ICartRepository cartRepository,
             IOrderRepository orderRepository,
             IStockReservationRepository stockReservation,
             IOutboxRepository outboxRepository,
-            IProductRepository productRepository)
+            IProductRepository productRepository,
+            ICartCache cartCache)
         {
             _cartRepository = cartRepository;
             _orderRepository = orderRepository;
             _stockReservation = stockReservation;
             _outboxRepository = outboxRepository;
             _productRepository = productRepository;
+            _cartCache = cartCache;
         }
 
         public async Task<BeginCheckoutResult> BeginCheckoutAsync(BeginCheckoutModel model)
@@ -124,6 +127,13 @@ namespace ECommerceBackend.Application.Services
                     await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
                 throw;
             }
+
+            // 5. Clear the ordered items from the cart so a subsequent checkout doesn't
+            //    re-order the same items. Invalidate the cached cart to match SQL.
+            foreach (var item in cartItems)
+                await _cartRepository.DeleteAsync(x => x.UserId == model.UserId && x.ProductId == item.ProductId);
+            await _cartRepository.SaveChangesAsync();
+            await _cartCache.InvalidateAsync(model.UserId);
 
             return new BeginCheckoutResult
             {
