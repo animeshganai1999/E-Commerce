@@ -12,8 +12,9 @@
 param(
     [string]$BaseUrl        = "http://localhost:5274",
     [int]   $UserCount      = 10,
-    [int]   $Quantity       = 100,   # units requested PER product line (high -> forces contention)
-    [int]   $ProductsPerUser = 0     # 0 = use ALL products; otherwise cap per user
+    [int]   $Quantity       = 70,   # units requested PER product line (high -> forces contention)
+    [int]   $ProductsPerUser = 0,   # 0 = use ALL products; otherwise cap per user
+    [switch]$Reset                  # flush Redis + re-seed stock from SQL before running
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,7 +23,17 @@ Write-Host "=== ShopCore parallel checkout test ($UserCount users) ===" -Foregro
 Write-Host "Base URL: $BaseUrl`n"
 
 # -----------------------------------------------------------------------------
-# 0. Pre-flight: fetch the WHOLE catalog once. Each user will later checkout a
+# 0a. Optional: reset Redis to a clean baseline (DEV endpoint) before testing.
+# -----------------------------------------------------------------------------
+if ($Reset) {
+    Write-Host "[reset] Flushing Redis + re-seeding stock from SQL..." -ForegroundColor Yellow
+    $r = Invoke-RestMethod -Uri "$BaseUrl/api/dev/reset-stock" -Method Post
+    Write-Host ("[reset] {0} (products warmed: {1})" -f $r.message, $r.productsWarmed) -ForegroundColor Green
+    Write-Host ""
+}
+
+# -----------------------------------------------------------------------------
+# 0b. Pre-flight: fetch the WHOLE catalog once. Each user will later checkout a
 #    RANDOM PERMUTATION of these products at high quantity, so total demand far
 #    exceeds stock and some users MUST fail on availability (409) - proving the
 #    Redis reservation hot path never oversells under concurrency.
@@ -37,8 +48,18 @@ if (-not $catalog.Items -or $catalog.Items.Count -eq 0) {
 $products = @($catalog.Items)
 Write-Host ("[setup] Catalog has {0} products. Each user will request {1} unit(s) per line." -f `
     $products.Count, $Quantity) -ForegroundColor Green
-Write-Host ("[setup] Total demand ~= {0} users x {1} products x {2} qty = {3} units (vs ~100 stock/item)." -f `
+Write-Host ("[setup] Total demand ~= {0} users x {1} products x {2} qty = {3} units." -f `
     $UserCount, $products.Count, $Quantity, ($UserCount * $products.Count * $Quantity)) -ForegroundColor Green
+
+# Show actual stock per product (StockQuantity comes straight from the catalog DTO).
+$totalStock = ($products | Measure-Object -Property StockQuantity -Sum).Sum
+$minStock   = ($products | Measure-Object -Property StockQuantity -Minimum).Minimum
+$maxStock   = ($products | Measure-Object -Property StockQuantity -Maximum).Maximum
+Write-Host ("[setup] Actual stock => total={0}, min={1}, max={2} across {3} products." -f `
+    $totalStock, $minStock, $maxStock, $products.Count) -ForegroundColor Cyan
+$products | Sort-Object Id | ForEach-Object {
+    Write-Host ("         Id={0,-4} stock={1,-5} {2}" -f $_.Id, $_.StockQuantity, $_.Title) -ForegroundColor DarkGray
+}
 Write-Host ""
 
 # -----------------------------------------------------------------------------

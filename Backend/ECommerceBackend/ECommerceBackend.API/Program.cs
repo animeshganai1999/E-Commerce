@@ -116,13 +116,16 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
     {
         // Fallback to a raw connection string (e.g. local development with "localhost:6379")
         var redisConnectionString = builder.Configuration.GetConnectionString("Redis")!;
-        return ConnectionMultiplexer.Connect(redisConnectionString);
+        var localOptions = ConfigurationOptions.Parse(redisConnectionString);
+        localOptions.AllowAdmin = builder.Environment.IsDevelopment(); // dev-only server admin ops (FLUSHDB)
+        return ConnectionMultiplexer.Connect(localOptions);
     }
 
     // Azure Managed Redis uses port 10000 and requires TLS
     var configurationOptions = ConfigurationOptions.Parse($"{redisHostName}:10000");
     configurationOptions.Ssl = true;
     configurationOptions.AbortOnConnectFail = false; // resilient: keep retrying instead of throwing on startup
+    configurationOptions.AllowAdmin = builder.Environment.IsDevelopment(); // dev-only server admin ops (FLUSHDB)
     configurationOptions
         .ConfigureForAzureWithTokenCredentialAsync(new DefaultAzureCredential())
         .GetAwaiter().GetResult();
