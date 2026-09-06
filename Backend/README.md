@@ -302,7 +302,6 @@ acts per cycle (multi-instance safe).
 | `POST` | `/api/checkout/begin` | Yes | **Step 1** - reserve stock + create Pending order (`[Idempotent]`) |
 | `POST` | `/api/payment/pay` | Yes | **Step 2** - confirm (success) or release (failure) |
 | `GET`  | `/api/orderedItems/get-invoice` | Yes | Fetch a user's invoices |
-| `POST` | `/api/email/send` | No | Contact-form email |
 | `GET`  | `/health` | No | SQL + Redis health checks |
 
 ---

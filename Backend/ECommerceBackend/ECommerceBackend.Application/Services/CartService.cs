@@ -9,26 +9,54 @@ namespace ECommerceBackend.Application.Services
     {
         private readonly ICartRepository _cartRepository;
         private readonly ICartCache _cartCache;
-        public CartService(ICartRepository cartRepository, ICartCache cartCache)
+        private readonly IProductRepository _productRepository;
+
+        public CartService(
+            ICartRepository cartRepository,
+            ICartCache cartCache,
+            IProductRepository productRepository)
         {
             _cartRepository = cartRepository ?? throw new ArgumentNullException(nameof(cartRepository));
             _cartCache = cartCache ?? throw new ArgumentNullException(nameof(cartCache));
+            _productRepository = productRepository ?? throw new ArgumentNullException(nameof(productRepository));
         }
 
-        // Fix for CS8601: Possible null reference assignment.
-        // The issue is that `item.Description` in `CartDiffDTO` might be null, but `CartItem.Description` is marked as required.
-        // To fix this, we can use the null-coalescing operator to provide a default value if `item.Description` is null.
-
-        public async Task ApplyCartDiffAsync(CartDiffDTO diff)
+        public async Task ApplyCartDiffAsync(Guid userId, CartDiffDTO diff)
         {
+            var requestedItems = diff.Added.Concat(diff.Updated).ToList();
+            if (diff.Added.Concat(diff.Updated).Concat(diff.Removed).Any(item => item.ProductId <= 0))
+                throw new ArgumentException("Product identifiers must be greater than zero.");
+            if (requestedItems.Any(item => item.Quantity <= 0))
+                throw new ArgumentException("Cart quantities must be greater than zero.");
+
+            var duplicateProductId = diff.Added
+                .GroupBy(item => item.ProductId)
+                .FirstOrDefault(group => group.Count() > 1)?.Key;
+            if (duplicateProductId.HasValue)
+                throw new ArgumentException($"Product {duplicateProductId.Value} appears more than once in Added.");
+
+            var products = (await _productRepository.GetProductsByIdsAsync(diff.Added.Select(item => item.ProductId)))
+                .ToDictionary(product => product.Id);
+
+            var missingProductId = diff.Added
+                .Select(item => item.ProductId)
+                .Cast<int?>()
+                .FirstOrDefault(productId => !products.ContainsKey(productId!.Value));
+            if (missingProductId.HasValue)
+                throw new KeyNotFoundException($"Product {missingProductId.Value} was not found.");
+
             // Add new items
-            var addedItems = diff.Added.Select(item => new CartItem
+            var addedItems = diff.Added.Select(item =>
             {
-                UserId = diff.UserId,
-                Description = item.Description ?? string.Empty,
-                ProductId = item.ProductId,
-                Quantity = item.Quantity,
-                UnitPrice = item.UnitPrice
+                var product = products[item.ProductId];
+                return new CartItem
+                {
+                    UserId = userId,
+                    Description = product.Title,
+                    ProductId = product.Id,
+                    Quantity = item.Quantity,
+                    UnitPrice = product.Price
+                };
             });
 
             await _cartRepository.AddRangeAsync(addedItems);
@@ -36,7 +64,7 @@ namespace ECommerceBackend.Application.Services
             // Update existing items
             foreach (var item in diff.Updated)
             {
-                var existing = await _cartRepository.GetAsync(x => x.UserId == diff.UserId && x.ProductId == item.ProductId);
+                var existing = await _cartRepository.GetAsync(x => x.UserId == userId && x.ProductId == item.ProductId);
                 if (existing != null)
                 {
                     existing.Quantity = item.Quantity;
@@ -47,13 +75,13 @@ namespace ECommerceBackend.Application.Services
             // Remove items
             foreach (var item in diff.Removed)
             {
-                await _cartRepository.DeleteAsync(x => x.UserId == diff.UserId && x.ProductId == item.ProductId);
+                await _cartRepository.DeleteAsync(x => x.UserId == userId && x.ProductId == item.ProductId);
             }
 
             await _cartRepository.SaveChangesAsync();
 
             // Invalidate the cached cart so subsequent reads reflect the latest state.
-            await _cartCache.InvalidateAsync(diff.UserId);
+            await _cartCache.InvalidateAsync(userId);
         }
 
         public async Task<IEnumerable<CartItem>> GetCartByUserIdAsync(Guid userId)

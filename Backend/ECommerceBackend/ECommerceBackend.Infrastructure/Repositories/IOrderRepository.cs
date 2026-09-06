@@ -8,9 +8,16 @@ namespace ECommerceBackend.Infrastructure.Repositories
         Task<Order?> GetByIdAsync(Guid orderId);       // includes line items
         Task UpdateStatusAsync(Guid orderId, OrderStatus status, DateTime? confirmedAt = null);
         Task MarkStockSettledAsync(Guid orderId, DateTime settledAt);
+        Task<OrderTransitionResult> ConfirmWithOutboxAsync(
+            Guid orderId,
+            Guid userId,
+            DateTime confirmedAt,
+            OutboxMessage outboxMessage);
+        Task<OrderTransitionResult> FailAsync(Guid orderId, Guid userId);
+        Task<ExpiredReservationAction> ResolveExpiredReservationAsync(Guid orderId, DateTime asOfUtc);
 
         // Reconciliation helpers.
-        // Total quantity currently held by Pending (unsettled) orders, grouped by product.
+        // Total quantity held by orders whose stock has not yet settled to SQL.
         Task<Dictionary<int, int>> GetPendingReservedQuantitiesAsync();
         // Same, but filtered to a specific set of product ids (scales to large catalogs).
         Task<Dictionary<int, int>> GetPendingReservedQuantitiesForAsync(IEnumerable<int> productIds);

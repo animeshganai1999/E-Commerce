@@ -29,6 +29,7 @@ namespace ECommerceBackend.Infrastructure.Repositories
 
         /// <summary>Returns a single product by id (read-only, no tracking), or null.</summary>
         Task<Product?> GetProductByIdAsync(int id);
+        Task<List<Product>> GetProductsByIdsAsync(IEnumerable<int> productIds);
         Task<int?> GetStockFromSqlAsync(int productId);
         Task<List<(int Id, int Stock)>> GetStockForManyAsync(IEnumerable<int> productIds);
     }

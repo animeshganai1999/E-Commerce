@@ -1,4 +1,5 @@
 ﻿using StackExchange.Redis;
+using ECommerceBackend.Domain.Entities;
 
 namespace ECommerceBackend.Infrastructure.Repositories
 {
@@ -8,6 +9,7 @@ namespace ECommerceBackend.Infrastructure.Repositories
         private readonly IDatabase _db;
         private readonly IConnectionMultiplexer _redis;
         private const string IndexKey = "reservations:index"; // the ZSET tracker
+        private static readonly TimeSpan ReservationCleanupGrace = TimeSpan.FromMinutes(10);
 
         public StockReservationRepository(IConnectionMultiplexer redis)
         {
@@ -27,7 +29,7 @@ namespace ECommerceBackend.Infrastructure.Repositories
         // ---- RESERVE: atomic stock check + decrement + reservation (same slot) ----
         // KEYS[1] = stock:{productId}
         // KEYS[2] = reservation:{productId}:{orderId}   (functional key)
-        // ARGV[1] = qty, ARGV[2] = ttlSeconds
+        // ARGV[1] = qty, ARGV[2] = keyTtlSeconds
         private const string ReserveScript = @"
             local stock = tonumber(redis.call('GET', KEYS[1]))
             if stock == nil then return -2 end
@@ -51,7 +53,7 @@ namespace ECommerceBackend.Infrastructure.Repositories
                 new RedisValue[]
                 {
                     quantity,
-                    (long)ttl.TotalSeconds
+                    (long)(ttl + ReservationCleanupGrace).TotalSeconds
                 });
 
             // Track expiry in the global ZSET (single-key op -> cluster-safe) only on success.
@@ -80,8 +82,16 @@ namespace ECommerceBackend.Infrastructure.Repositories
         // KEYS[2] = reservation:{productId}:{orderId}
         // ARGV[1] = qty
         private const string ReleaseScript = @"
-            redis.call('INCRBY', KEYS[1], tonumber(ARGV[1]))
+            local quantity = redis.call('GET', KEYS[2])
+            if quantity == false then return 0 end
+            redis.call('INCRBY', KEYS[1], tonumber(quantity))
             redis.call('DEL', KEYS[2])
+            return tonumber(quantity)";
+
+        private const string CompareAndSetStockScript = @"
+            local current = redis.call('GET', KEYS[1])
+            if current == false or tonumber(current) ~= tonumber(ARGV[1]) then return 0 end
+            redis.call('SET', KEYS[1], ARGV[2])
             return 1";
 
         public async Task ReleaseAsync(Guid orderId, int productId, int quantity)
@@ -93,18 +103,25 @@ namespace ECommerceBackend.Infrastructure.Repositories
                 {
                     StockKey(productId),
                     ReservationKey(orderId, productId)
-                },
-                new RedisValue[] { quantity });
+                });
 
             // Remove from the global ZSET separately (cluster-safe single-key op).
             await _db.SortedSetRemoveAsync(IndexKey, member);
         }
 
         // ===== RECLAIM (no lock — sweeper service coordinates) =====
-        public async Task<int> ReclaimExpiredAsync()
+        public async Task<int> ReclaimExpiredAsync(
+            Func<Guid, Task<ExpiredReservationAction>> resolveActionAsync)
         {
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var expired = await _db.SortedSetRangeByScoreAsync(IndexKey, 0, now);
+            var expired = await _db.SortedSetRangeByScoreAsync(
+                IndexKey,
+                start: 0,
+                stop: now,
+                exclude: Exclude.None,
+                order: StackExchange.Redis.Order.Ascending,
+                skip: 0,
+                take: 100);
 
             int reclaimed = 0;
             foreach (var member in expired)
@@ -116,22 +133,36 @@ namespace ECommerceBackend.Infrastructure.Repositories
                     continue;
                 }
 
-                var orderId = parts[0];
-                var productId = parts[1];
-                var qty = int.Parse(parts[2]);
+                if (!Guid.TryParse(parts[0], out var orderId)
+                    || !int.TryParse(parts[1], out var productId))
+                {
+                    await _db.SortedSetRemoveAsync(IndexKey, member);
+                    continue;
+                }
 
-                await _db.ScriptEvaluateAsync(
+                var action = await resolveActionAsync(orderId);
+                if (action == ExpiredReservationAction.Skip)
+                    continue;
+
+                if (action == ExpiredReservationAction.Confirm)
+                {
+                    await _db.KeyDeleteAsync(ReservationKey(orderId, productId));
+                    await _db.SortedSetRemoveAsync(IndexKey, member);
+                    continue;
+                }
+
+                var releasedQuantity = (long)await _db.ScriptEvaluateAsync(
                     ReleaseScript,
                     new RedisKey[]
                     {
-                        StockKey(int.Parse(productId)),
-                        ReservationKey(Guid.Parse(orderId), int.Parse(productId))
-                    },
-                    new RedisValue[] { qty });
+                        StockKey(productId),
+                        ReservationKey(orderId, productId)
+                    });
 
                 await _db.SortedSetRemoveAsync(IndexKey, member);
 
-                reclaimed++;
+                if (releasedQuantity > 0)
+                    reclaimed++;
             }
             return reclaimed;
         }
@@ -195,6 +226,18 @@ namespace ECommerceBackend.Infrastructure.Repositories
         public async Task SetStockAsync(int productId, int quantity)
         {
             await _db.StringSetAsync(StockKey(productId), quantity);
+        }
+
+        public async Task<bool> SetStockIfUnchangedAsync(
+            int productId,
+            long expectedCurrent,
+            int quantity)
+        {
+            var result = (long)await _db.ScriptEvaluateAsync(
+                CompareAndSetStockScript,
+                new RedisKey[] { StockKey(productId) },
+                new RedisValue[] { expectedCurrent, quantity });
+            return result == 1;
         }
 
         // Enumerate the "hot" product ids currently held in Redis via SCAN (non-blocking).

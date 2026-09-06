@@ -1,4 +1,5 @@
 ﻿using ECommerceBackend.Infrastructure.Repositories;
+using ECommerceBackend.Application.Constants;
 
 public class ReservationSweeperService : BackgroundService
 {
@@ -6,8 +7,6 @@ public class ReservationSweeperService : BackgroundService
     private readonly ILogger<ReservationSweeperService> _logger;
 
     private readonly TimeSpan _interval = TimeSpan.FromSeconds(30);
-    private readonly TimeSpan _lockTtl = TimeSpan.FromSeconds(25); // < interval
-    private const string LockKey = "lock:reservation-sweeper";
 
     public ReservationSweeperService(
         IServiceProvider services,
@@ -27,15 +26,21 @@ public class ReservationSweeperService : BackgroundService
                 using var scope = _services.CreateScope();
                 var repo = scope.ServiceProvider
                                 .GetRequiredService<IStockReservationRepository>();
+                var orderRepository = scope.ServiceProvider
+                                .GetRequiredService<IOrderRepository>();
 
                 // Only ONE instance across the cluster wins the lock this cycle.
-                var token = await repo.AcquireLockAsync(LockKey, _lockTtl);
+                var token = await repo.AcquireLockAsync(
+                    StockMaintenanceLock.Key,
+                    StockMaintenanceLock.Ttl);
 
                 if (token is not null)
                 {
                     try
                     {
-                        int reclaimed = await repo.ReclaimExpiredAsync();
+                        var asOfUtc = DateTime.UtcNow;
+                        int reclaimed = await repo.ReclaimExpiredAsync(
+                            orderId => orderRepository.ResolveExpiredReservationAsync(orderId, asOfUtc));
                         if (reclaimed > 0)
                             _logger.LogInformation(
                                 "Reservation sweeper reclaimed {Count} expired reservations",
@@ -44,7 +49,9 @@ public class ReservationSweeperService : BackgroundService
                     finally
                     {
                         // Always release our lock (safe compare-and-delete).
-                        await repo.ReleaseLockAsync(LockKey, token);
+                        await repo.ReleaseLockAsync(
+                            StockMaintenanceLock.Key,
+                            token);
                     }
                 }
                 // else: another instance holds the lock — skip this cycle.

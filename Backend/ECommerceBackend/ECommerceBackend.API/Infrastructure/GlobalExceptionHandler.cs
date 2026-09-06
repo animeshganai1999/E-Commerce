@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using ECommerceBackend.Application.Exceptions;
 
 namespace ECommerceBackend.API.Infrastructure
 {
@@ -22,13 +23,44 @@ namespace ECommerceBackend.API.Infrastructure
             Exception exception,
             CancellationToken cancellationToken)
         {
-            _logger.LogError(exception, "Unhandled exception for {Path}", httpContext.Request.Path);
+            var (status, title, detail) = exception switch
+            {
+                ForbiddenAccessException => (
+                    StatusCodes.Status403Forbidden,
+                    "Forbidden",
+                    exception.Message),
+                OrderStateConflictException => (
+                    StatusCodes.Status409Conflict,
+                    "Order state conflict",
+                    exception.Message),
+                KeyNotFoundException => (
+                    StatusCodes.Status404NotFound,
+                    "Resource not found",
+                    exception.Message),
+                ArgumentException => (
+                    StatusCodes.Status400BadRequest,
+                    "Invalid request",
+                    exception.Message),
+                UnauthorizedAccessException => (
+                    StatusCodes.Status401Unauthorized,
+                    "Unauthorized",
+                    exception.Message),
+                _ => (
+                    StatusCodes.Status500InternalServerError,
+                    "An unexpected error occurred.",
+                    "Please try again later. If the problem persists, contact support.")
+            };
+
+            if (status >= StatusCodes.Status500InternalServerError)
+                _logger.LogError(exception, "Unhandled exception for {Path}", httpContext.Request.Path);
+            else
+                _logger.LogWarning(exception, "Request failed for {Path}", httpContext.Request.Path);
 
             var problemDetails = new ProblemDetails
             {
-                Status = StatusCodes.Status500InternalServerError,
-                Title = "An unexpected error occurred.",
-                Detail = "Please try again later. If the problem persists, contact support.",
+                Status = status,
+                Title = title,
+                Detail = detail,
                 Instance = httpContext.Request.Path
             };
 

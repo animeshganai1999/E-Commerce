@@ -5,7 +5,6 @@ namespace ECommerceBackend.Application.Models
     // the invoice + email from the persisted order (not the cart).
     public class BeginCheckoutModel
     {
-        public Guid UserId { get; set; }
         public required OrderDetails OrderDetails { get; set; }
     }
 }

@@ -79,6 +79,16 @@ namespace ECommerceBackend.Infrastructure.Repositories
         {
             return await _context.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
         }
+
+        public async Task<List<Product>> GetProductsByIdsAsync(IEnumerable<int> productIds)
+        {
+            var ids = productIds.Distinct().ToList();
+            return await _context.Products
+                .AsNoTracking()
+                .Where(p => ids.Contains(p.Id))
+                .ToListAsync();
+        }
+
         public async Task<int?> GetStockFromSqlAsync(int productId)
         {
             return await _context.Products

@@ -1,4 +1,5 @@
 using ECommerceBackend.Application.Interfaces;
+using ECommerceBackend.API.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -31,18 +32,19 @@ namespace ECommerceBackend.API.Controllers
         public async Task<IActionResult> Pay([FromBody] PaymentRequest request)
         {
             _logger.LogInformation("Payment attempt for order {OrderId}", request.OrderId);
+            var userId = User.GetRequiredUserId();
 
             // --- Dummy payment processing ---
             // In future, verify a real payment gateway result here.
             if (!request.Success)
             {
-                await _checkoutService.ReleaseStockAsync(request.OrderId);
+                await _checkoutService.ReleaseStockAsync(request.OrderId, userId);
                 return StatusCode(402, new { message = "Payment failed. Reservation released." });
             }
 
             // Payment succeeded -> confirm the order. This writes the outbox message; the
             // background worker generates the invoice, emails it, and settles stock to SQL.
-            await _checkoutService.ConfirmStockAsync(request.OrderId);
+            await _checkoutService.ConfirmStockAsync(request.OrderId, userId);
 
             return Ok(new { message = "Payment successful. Your order is confirmed; invoice will arrive by email shortly." });
         }

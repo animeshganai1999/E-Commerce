@@ -1,4 +1,6 @@
-﻿namespace ECommerceBackend.Infrastructure.Repositories
+﻿using ECommerceBackend.Domain.Entities;
+
+namespace ECommerceBackend.Infrastructure.Repositories
 {
     public interface IStockReservationRepository
     {
@@ -14,7 +16,8 @@
         Task ReleaseAsync(Guid orderId, int productId, int quantity);
 
         // Reclaim expired reservations (no locking here — the caller coordinates).
-        Task<int> ReclaimExpiredAsync();
+        Task<int> ReclaimExpiredAsync(
+            Func<Guid, Task<ExpiredReservationAction>> resolveActionAsync);
 
         // --- Generic distributed lock (reusable, e.g. sweeper + outbox processor) ---
         Task<string?> AcquireLockAsync(string lockKey, TimeSpan ttl);
@@ -31,6 +34,7 @@
 
         // Force-set the authoritative reconciled value for a product's stock key.
         Task SetStockAsync(int productId, int quantity);
+        Task<bool> SetStockIfUnchangedAsync(int productId, long expectedCurrent, int quantity);
 
         // Product ids that currently have a stock key in Redis (the "hot" set) — via SCAN.
         Task<List<int>> GetTrackedProductIdsAsync();
