@@ -6,7 +6,7 @@ namespace ECommerceBackend.Infrastructure.Repositories
     {
         Task AddAsync(Order order);
         Task<Order?> GetByIdAsync(Guid orderId);       // includes line items
-        Task MarkStockSettledAsync(Guid orderId, DateTime settledAt);
+        Task<StockSettlementResult> SettleStockAsync(Guid orderId, DateTime settledAt);
         Task<OrderTransitionResult> ConfirmWithOutboxAsync(
             Guid orderId,
             Guid userId,

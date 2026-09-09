@@ -1,5 +1,6 @@
 using ECommerceBackend.Application.Messaging;
 using ECommerceBackend.Application.Constants;
+using ECommerceBackend.Domain.Entities;
 using ECommerceBackend.Infrastructure.Repositories;
 using System.Text.Json;
 
@@ -33,7 +34,6 @@ namespace ECommerceBackend.API.HostedServices
                     using var scope = _services.CreateScope();
                     var outbox = scope.ServiceProvider.GetRequiredService<IOutboxRepository>();
                     var stockReservation = scope.ServiceProvider.GetRequiredService<IStockReservationRepository>();
-                    var productRepo = scope.ServiceProvider.GetRequiredService<IProductRepository>();
                     var orderRepo = scope.ServiceProvider.GetRequiredService<IOrderRepository>();
                     var publisher = scope.ServiceProvider.GetRequiredService<IFulfillmentPublisher>();
 
@@ -49,21 +49,38 @@ namespace ECommerceBackend.API.HostedServices
 
                     try
                     {
-                        var messages = await outbox.GetUnprocessedAsync(batchSize: 20);
+                        var messages = await outbox.GetReadyAsync(
+                            batchSize: 20,
+                            DateTime.UtcNow);
 
                         foreach (var msg in messages)
                         {
                             try
                             {
                                 if (msg.Type == "OrderConfirmed")
-                                    await SettleAndPublishAsync(msg.Payload, stockReservation, productRepo,
-                                        orderRepo, publisher, stoppingToken);
+                                {
+                                    await SettleAndPublishAsync(
+                                        msg,
+                                        stockReservation,
+                                        orderRepo,
+                                        publisher,
+                                        stoppingToken);
+                                }
+                                else
+                                {
+                                    throw new InvalidOperationException(
+                                        $"Unsupported outbox message type '{msg.Type}'.");
+                                }
 
-                                await outbox.MarkProcessedAsync(msg.Id);
+                                await outbox.MarkPublishedAsync(msg.Id, DateTime.UtcNow);
+                            }
+                            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                            {
+                                throw;
                             }
                             catch (Exception ex)
                             {
-                                await outbox.MarkFailedAsync(msg.Id, ex.Message);
+                                await outbox.RecordFailureAsync(msg.Id, ex.Message, DateTime.UtcNow);
                                 _logger.LogError(ex, "Outbox relay message {Id} failed (retry {Retry})", msg.Id, msg.RetryCount + 1);
                             }
                         }
@@ -72,6 +89,10 @@ namespace ECommerceBackend.API.HostedServices
                     {
                         await stockReservation.ReleaseLockAsync(outboxLockKey, lockToken);
                     }
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
                 }
                 catch (Exception ex)
                 {
@@ -83,16 +104,19 @@ namespace ECommerceBackend.API.HostedServices
         }
 
         private static async Task SettleAndPublishAsync(
-            string payload,
+            OutboxMessage message,
             IStockReservationRepository stockReservation,
-            IProductRepository productRepo,
             IOrderRepository orderRepo,
             IFulfillmentPublisher publisher,
             CancellationToken cancellationToken)
         {
-            var orderId = JsonSerializer.Deserialize<OrderConfirmedPayload>(payload)!.OrderId;
+            var orderId = message.AggregateId
+                ?? JsonSerializer.Deserialize<OrderConfirmedPayload>(message.Payload)?.OrderId
+                ?? throw new InvalidOperationException(
+                    $"Outbox message {message.Id} does not contain an order id.");
             var order = await orderRepo.GetByIdAsync(orderId);
-            if (order == null) return;
+            if (order == null)
+                throw new InvalidOperationException($"Order {orderId} was not found.");
 
             // Keep only Redis/SQL stock mutations under the shared maintenance lock. Service Bus
             // publication happens afterward so a slow external call cannot block checkouts.
@@ -105,23 +129,21 @@ namespace ECommerceBackend.API.HostedServices
             try
             {
                 order = await orderRepo.GetByIdAsync(orderId);
-                if (order == null) return;
+                if (order == null)
+                    throw new InvalidOperationException($"Order {orderId} was not found.");
 
-                if (order.StockSettledAt == null)
+                var settlement = await orderRepo.SettleStockAsync(orderId, DateTime.UtcNow);
+                if (settlement == StockSettlementResult.OrderNotConfirmed)
+                    throw new InvalidOperationException($"Order {orderId} is not confirmed.");
+                if (settlement == StockSettlementResult.OrderNotFound)
+                    throw new InvalidOperationException($"Order {orderId} was not found.");
+
+                foreach (var item in order.Items)
                 {
-                    foreach (var item in order.Items)
-                    {
-                        await stockReservation.ConfirmAsync(
-                            orderId,
-                            item.ProductId,
-                            item.Quantity);
-                        var deducted = await productRepo.TryDeductStockAsync(item.ProductId, item.Quantity);
-                        if (!deducted)
-                            throw new InvalidOperationException(
-                                $"Unable to settle stock for product {item.ProductId} in order {orderId}.");
-                    }
-
-                    await orderRepo.MarkStockSettledAsync(orderId, DateTime.UtcNow);
+                    await stockReservation.ConfirmAsync(
+                        orderId,
+                        item.ProductId,
+                        item.Quantity);
                 }
             }
             finally

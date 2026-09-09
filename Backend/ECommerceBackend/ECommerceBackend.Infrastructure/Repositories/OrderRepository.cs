@@ -24,13 +24,47 @@ namespace ECommerceBackend.Infrastructure.Repositories
                 .FirstOrDefaultAsync(o => o.Id == orderId);
         }
 
-        public async Task MarkStockSettledAsync(Guid orderId, DateTime settledAt)
+        public async Task<StockSettlementResult> SettleStockAsync(Guid orderId, DateTime settledAt)
         {
-            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
-            if (order == null) return;
+            var strategy = _context.Database.CreateExecutionStrategy();
+            return await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _context.Database.BeginTransactionAsync();
+                var order = await _context.Orders
+                    .Include(o => o.Items)
+                    .FirstOrDefaultAsync(o => o.Id == orderId);
 
-            order.StockSettledAt = settledAt;
-            await _context.SaveChangesAsync();
+                if (order is null)
+                    return StockSettlementResult.OrderNotFound;
+                if (order.Status != OrderStatus.Confirmed)
+                    return StockSettlementResult.OrderNotConfirmed;
+                if (order.StockSettledAt.HasValue)
+                    return StockSettlementResult.AlreadySettled;
+
+                foreach (var item in order.Items)
+                {
+                    var rowsAffected = await _context.Products
+                        .Where(product =>
+                            product.Id == item.ProductId
+                            && product.StockQuantity >= item.Quantity)
+                        .ExecuteUpdateAsync(setters =>
+                            setters.SetProperty(
+                                product => product.StockQuantity,
+                                product => product.StockQuantity - item.Quantity));
+
+                    if (rowsAffected != 1)
+                    {
+                        await transaction.RollbackAsync();
+                        throw new InvalidOperationException(
+                            $"Unable to settle stock for product {item.ProductId} in order {orderId}.");
+                    }
+                }
+
+                order.StockSettledAt = settledAt;
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+                return StockSettlementResult.Settled;
+            });
         }
 
         public async Task<OrderTransitionResult> ConfirmWithOutboxAsync(

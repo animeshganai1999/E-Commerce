@@ -1,4 +1,4 @@
-# ECommerceBackend — Architecture Guide
+# ECommerceBackend ï¿½ Architecture Guide
 
 > **Target framework:** .NET 8 &nbsp;|&nbsp; **Style:** Clean Architecture
 > **Focus areas:** Scalability, Concurrency, Thread Safety, System Design
@@ -56,7 +56,7 @@ What the codebase supports today vs. what needs to be added.
 | Global exception handling | Done | `GlobalExceptionHandler` + `ProblemDetails` |
 | Health checks / resiliency | Done | `/health` (SQL + Redis) + EF retry + outbox dead-letter |
 | Redis distributed cache (products + cart read) | Done | Cache-aside `ProductCache` (paged + per-id) & `CartCache` (per-user, invalidated on write); 5-10min TTL |
-| Azure Service Bus queue | Missing | Outbox ready to publish to it |
+| Azure Service Bus queue | Done | Stable order message IDs, retries, lock renewal, and DLQ handling |
 | Multi-instance deploy (App Service) | Pending | Code is multi-instance safe (locks); deploy TBD |
 
 ---
@@ -65,7 +65,7 @@ What the codebase supports today vs. what needs to be added.
 
 ### 3.1 Critical Bugs & Thread Safety
 
-**Blocking async calls (`.Wait()`)** — In `CheckoutController.Checkout`, `.Wait()` blocks a
+**Blocking async calls (`.Wait()`)** ï¿½ In `CheckoutController.Checkout`, `.Wait()` blocks a
 thread-pool thread and can deadlock under load. Replace with `await` inside a `try/catch`.
 **Highest-priority fix.**
 ```csharp
@@ -85,7 +85,7 @@ catch (Exception ex)
 }
 ```
 
-**`BlobServiceClient` per request** — `new BlobServiceClient(...)` on every call risks socket
+**`BlobServiceClient` per request** ï¿½ `new BlobServiceClient(...)` on every call risks socket
 exhaustion. Register once as a **singleton** (thread-safe) and inject it. Call
 `CreateIfNotExistsAsync` once at startup.
 ```csharp
@@ -96,9 +96,9 @@ builder.Services.AddSingleton(sp =>
 });
 ```
 
-**Cart update atomicity — DONE** — `ApplyCartDiffAsync` now runs the whole add/update/remove diff
+**Cart update atomicity ï¿½ DONE** ï¿½ `ApplyCartDiffAsync` now runs the whole add/update/remove diff
 in **one transaction** with a `RowVersion` concurrency token + retry (see Section 4.1).
-> EF Core `DbContext` is **not thread-safe** — never share one across parallel tasks in a request.
+> EF Core `DbContext` is **not thread-safe** ï¿½ never share one across parallel tasks in a request.
 
 ### 3.2 Data Layer & Query Concerns
 
@@ -130,7 +130,7 @@ in **one transaction** with a `RowVersion` concurrency token + retry (see Sectio
 | S2 | **Background queue** | Offload invoice PDF + email to a worker via Service Bus / RabbitMQ |
 | S3 | **Idempotency** | `Idempotency-Key` header to make checkout retries safe |
 | S4 | **Gateway rate limiting** | Enforced at the edge (Front Door WAF / APIM), not in app code |
-| S5 | **Statelessness** | JWT already stateless — keep no in-process session state |
+| S5 | **Statelessness** | JWT already stateless ï¿½ keep no in-process session state |
 
 ---
 
@@ -152,7 +152,7 @@ Two **different** races that need **different** fixes.
 ### 4.2 Inventory Oversell (shared resource)
 
 **Problem:** stock = 10, two users each order 8. Both read "10 >= 8" and deduct -> oversold.
-> **Not guarded today** — the backend has no `Product`/`StockQuantity` entity.
+> **Not guarded today** ï¿½ the backend has no `Product`/`StockQuantity` entity.
 
 | Approach | Correct? | Concurrency | Complexity | Use when |
 |----------|----------|-------------|------------|----------|
@@ -161,7 +161,7 @@ Two **different** races that need **different** fixes.
 | Pessimistic lock | Yes | Low | Medium | High-value, rare writes |
 | Reserve + TTL (Redis) | Yes | High | High | Real checkout / flash sales |
 
-**Recommended start — atomic conditional UPDATE** (DB serializes concurrent orders):
+**Recommended start ï¿½ atomic conditional UPDATE** (DB serializes concurrent orders):
 ```csharp
 int rows = await _context.Products
     .Where(p => p.Id == id && p.StockQuantity >= qty)
@@ -170,7 +170,7 @@ int rows = await _context.Products
 if (rows == 0) throw new InsufficientStockException();   // 0 rows = not enough stock
 ```
 
-**Large-scale pattern — Reserve -> Confirm -> Settle:**
+**Large-scale pattern ï¿½ Reserve -> Confirm -> Settle:**
 ```
 1. RESERVE (fast, Redis atomic DECRBY / Lua)  - hold stock with a TTL
 2. CONFIRM (on payment success)               - reservation -> real order
@@ -196,10 +196,10 @@ No instance may hold request-specific state in memory (the next request may hit 
 | Invoices in Blob | Yes | Shared external storage |
 | Rate limiter (in-memory) | No | Per-instance counts multiply -> needs Redis |
 
-### Hosting (Azure — already using Blob)
+### Hosting (Azure ï¿½ already using Blob)
 | Option | Best for | Scaling |
 |--------|----------|---------|
-| **Azure App Service** | Easiest — deploy + "scale out" | Auto-scales instance count |
+| **Azure App Service** | Easiest ï¿½ deploy + "scale out" | Auto-scales instance count |
 | Azure Container Apps | Containerized, serverless scaling | Scale to zero / many |
 | Azure Kubernetes Service | Large, complex systems | Full control |
 
@@ -227,9 +227,9 @@ flowchart LR
 
 ## 7. Implementation Roadmap
 
-Phased delivery — each phase is independently shippable and testable.
+Phased delivery ï¿½ each phase is independently shippable and testable.
 
-### Phase 1 — Quick Wins (code-only, low risk)
+### Phase 1 ï¿½ Quick Wins (code-only, low risk)
 1. Remove `.Wait()` -> `await` in `CheckoutController` *(thread safety)*
 2. Singleton `BlobServiceClient` + inject into `OrderedItemService` *(resource pooling)*
 3. `AsNoTracking()` on read queries *(D1)*
@@ -240,40 +240,39 @@ Phased delivery — each phase is independently shippable and testable.
 8. `UseHttpsRedirection` + `UseForwardedHeaders` *(Q8)*
 9. Config-driven CORS + secrets in User Secrets/Key Vault *(Q7)*
 
-### Phase 2 — Inventory Correctness (new entity, medium) — DONE
+### Phase 2 ï¿½ Inventory Correctness (new entity, medium) ï¿½ DONE
 10. ? Cart `RowVersion` migration applied
 11. ? `Product` entity (full fakestoreapi schema) + `StockQuantity` + seed data
 12. ? Atomic stock deduction in checkout (returns 409 on insufficient stock) *(4.2)*
 13. ? Indexes on `CartItem.UserId` / `UserInvoice.UserId`
-14. ? `GET /api/products` + `GET /api/products/{id}` (serve catalog + live stock) — now **paged +
+14. ? `GET /api/products` + `GET /api/products/{id}` (serve catalog + live stock) ï¿½ now **paged +
     category-filtered** (`?page=&pageSize=&category=`) with an index on `Product.Category`
 
 > ?? Run `Add-Migration AddProductsAndIndexes` + `Update-Database` to apply the `Products`
 > table, seed data, and indexes.
 
-### Phase 3 — Distributed State (Redis) — mostly DONE
+### Phase 3 ï¿½ Distributed State (Redis) ï¿½ mostly DONE
 14. ? Redis distributed **read** cache for products + cart (cache-aside) *(S1)*
-    — `ProductCache` (paged + per-id, 5-min TTL) & `CartCache` (per-user, 10-min TTL, invalidated on write)
-15. ? Idempotency keys on checkout *(S3)* — 3 layers (request / confirm / settlement)
-16. ? Configure **gateway rate limiting** (Front Door WAF / APIM) *(S4)* — infra, see Section 8
+    ï¿½ `ProductCache` (paged + per-id, 5-min TTL) & `CartCache` (per-user, 10-min TTL, invalidated on write)
+15. ? Idempotency keys on checkout *(S3)* ï¿½ 3 layers (request / confirm / settlement)
+16. ? Configure **gateway rate limiting** (Front Door WAF / APIM) *(S4)* ï¿½ infra, see Section 8
 
-### Phase 4 — Async Processing & Infrastructure — mostly DONE
-17. ? Azure Service Bus queue *(S2)* — outbox is ready to publish to it (infra/Azure)
-18. ? Background worker for invoice PDF + email *(S2)* — moved into the outbox processor
-19. ? Redis reserve-and-confirm inventory *(4.2)* — dual-write + sweeper + lazy load + warm-up
-20. ? Health checks + resiliency *(Q6)* — `/health` (SQL+Redis), EF `EnableRetryOnFailure`, outbox dead-letter
-21. ? Deploy multiple instances (App Service auto-scale) *(Section 5)* — code is lock-guarded & ready
+### Phase 4 ï¿½ Async Processing & Infrastructure ï¿½ mostly DONE
+17. ? Azure Service Bus queue *(S2)* ï¿½ outbox is ready to publish to it (infra/Azure)
+18. ? Background worker for invoice PDF + email *(S2)* ï¿½ moved into the outbox processor
+19. ? Redis reserve-and-confirm inventory *(4.2)* ï¿½ dual-write + sweeper + lazy load + warm-up
+20. ? Health checks + resiliency *(Q6)* ï¿½ `/health` (SQL+Redis), EF `EnableRetryOnFailure`, outbox dead-letter
+21. ? Deploy multiple instances (App Service auto-scale) *(Section 5)* ï¿½ code is lock-guarded & ready
 
 **Also completed (beyond the original plan):**
-- ? **Order tables** (`Orders` + `OrderItems`) — durable reserved-set snapshot
-- ? **Outbox pattern** — crash-safe Redis<->SQL settlement (atomic capture + relay)
-- ? **Two-step checkout** — `/checkout/begin` (reserve) + `/payment/pay` (dummy payment)
-- ? **Reconciliation job** — self-heals Redis<->SQL drift + fails expired orders
-- ? **Distributed locks** — generic lock guarding sweeper, outbox, reconciliation
+- ? **Order tables** (`Orders` + `OrderItems`) ï¿½ durable reserved-set snapshot
+- ? **Outbox pattern** ï¿½ crash-safe Redis<->SQL settlement (atomic capture + relay)
+- ? **Two-step checkout** ï¿½ `/checkout/begin` (reserve) + `/payment/pay` (dummy payment)
+- ? **Reconciliation job** ï¿½ self-heals Redis<->SQL drift + fails expired orders
+- ? **Distributed locks** ï¿½ generic lock guarding sweeper, outbox, reconciliation
 
 ### Remaining (infra / Azure)
-- Gateway rate limiting (S4) — Front Door WAF / APIM
-- Azure Service Bus (S2) — swap outbox relay to publish
+- Gateway rate limiting (S4) ï¿½ Front Door WAF / APIM
 - Multi-instance deployment (App Service auto-scale)
 - Secrets to User Secrets / Key Vault (Q7)
 
@@ -289,7 +288,7 @@ The in-app ASP.NET rate limiter (`AddRateLimiter` / `[EnableRateLimiting]`) has 
 
 ### Why the gateway
 - Excess traffic is rejected **before** it reaches the app (saves CPU/DB).
-- **Centralized** and naturally **distributed** — no per-instance counters, no Redis needed for limits.
+- **Centralized** and naturally **distributed** ï¿½ no per-instance counters, no Redis needed for limits.
 - Protects all instances uniformly.
 
 ### Request flow
@@ -305,13 +304,13 @@ User -> Front Door (WAF rate limit) -> [optional APIM] -> Load Balancer -> API i
 | General API (cart, invoices) | `/api/` | 30 / min per IP |
 | Global | all | 100 / min per IP |
 
-### Option A — Azure Front Door WAF (edge)
+### Option A ï¿½ Azure Front Door WAF (edge)
 - Rate limit via **WAF custom rules** matching `RequestUri`.
 - **Windows:** 1 or 5 minutes only. **Key:** client IP.
 - Put more specific paths (e.g., `refresh-token`) at a **lower priority number** so they match first.
 - Best when you also want **CDN + global edge + DDoS** protection.
 
-### Option B — Azure API Management (fine-grained)
+### Option B ï¿½ Azure API Management (fine-grained)
 - `rate-limit-by-key` / `quota-by-key` policies per operation.
 - **Any window** (seconds/minutes) and richer keys (IP, subscription, user).
 - Best when you need **exact per-endpoint limits** like the old code.
@@ -336,6 +335,83 @@ Restrict App Service so traffic **only** comes through the gateway (access restr
 
 > **Note:** `UseForwardedHeaders()` is still required in the app so logs record the **real client IP**
 > forwarded by the gateway.
+
+---
+
+## 9. Request Idempotency
+
+`POST /api/checkout/begin` requires a caller-generated `Idempotency-Key` header. Redis scopes
+the key by authenticated user ID, HTTP method, and normalized route, so callers and operations
+cannot collide. The request body is hashed; reusing a key with different request data returns
+`409 Conflict`.
+
+The first request holds a two-minute processing lease that is renewed every 30 seconds while
+the request remains active. Identical concurrent requests receive `409 Conflict` while it is
+active. A successful or expected client-error response is retained for 24 hours with its
+original status code, content type, body, and replay-safe headers. Responses with a 5xx status
+and unhandled exceptions release the claim instead of being cached. If the process terminates
+without cleanup, renewal stops and the short processing lease expires, so the caller is not
+blocked for the full response-retention period.
+
+Caller keys must be 1â€“128 ASCII characters and may contain letters, numbers, `.`, `_`, `:`, and
+`-`. A retry of the same logical checkout must reuse the same key; a new checkout must use a new
+key.
+
+## 10. Service Bus and Outbox Operations
+
+### Required queue configuration
+
+The fulfillment queue must enable duplicate detection because an application crash can occur
+after Service Bus accepts a message but before SQL records `PublishedAt`.
+
+Verify the queue configuration:
+
+```powershell
+az servicebus queue show --resource-group <resource-group> --namespace-name <namespace> --name <queue> --query "{duplicateDetection:requiresDuplicateDetection,history:duplicateDetectionHistoryTimeWindow,lockDuration:lockDuration,maxDeliveryCount:maxDeliveryCount}"
+```
+
+Required operational settings:
+
+- duplicate detection enabled before the queue is created;
+- duplicate history long enough to cover the maximum outbox retry period;
+- lock duration and automatic lock renewal long enough for PDF generation, Blob upload, and email;
+- maximum delivery count configured so repeated fulfillment failures move to the DLQ.
+
+Invoice blobs are stored in a private container at the deterministic
+`invoices/{OrderId}.pdf` path. The authenticated invoice API verifies ownership through the
+user-scoped SQL query and returns a read-only SAS URL that expires after 15 minutes; permanent
+or public Blob URLs are not exposed to clients.
+
+### Failed outbox recovery
+
+Outbox messages retry automatically with exponential backoff. After ten failed attempts they
+remain in SQL with `FailedAt`, `RetryCount`, and `Error` populated. Inspect them before replay:
+
+```sql
+SELECT Id, AggregateId, Type, RetryCount, LastAttemptAt, FailedAt, Error
+FROM OutboxMessages
+WHERE FailedAt IS NOT NULL AND ProcessedAt IS NULL
+ORDER BY FailedAt;
+```
+
+After correcting the underlying problem, requeue a specific message:
+
+```sql
+UPDATE OutboxMessages
+SET FailedAt = NULL, NextAttemptAt = SYSUTCDATETIME(), RetryCount = 0, Error = NULL
+WHERE Id = '<outbox-message-id>' AND ProcessedAt IS NULL;
+```
+
+### Service Bus DLQ replay
+
+Use Service Bus Explorer in the Azure portal to peek the fulfillment queue's dead-letter
+subqueue. Confirm the `OrderId`, dead-letter reason, and message body before resending it to the
+active queue. Preserve the original `MessageId`; fulfillment is keyed by `OrderId` and skips
+Blob, email, and invoice steps already recorded as complete.
+
+Email delivery is at-least-once. A process crash after SMTP accepts an email but before
+`EmailDispatchedAt` is committed can cause a duplicate email, although all database and Blob
+effects remain idempotent.
 
 ---
 

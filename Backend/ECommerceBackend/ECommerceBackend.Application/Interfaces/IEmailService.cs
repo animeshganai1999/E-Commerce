@@ -6,6 +6,7 @@ namespace ECommerceBackend.Application.Interfaces
         Task SendInvoiceEmailAsync(
             IConfiguration config,
             byte[] pdfBytes,
-            string receiverEmail);
+            string receiverEmail,
+            CancellationToken cancellationToken);
     }
 }

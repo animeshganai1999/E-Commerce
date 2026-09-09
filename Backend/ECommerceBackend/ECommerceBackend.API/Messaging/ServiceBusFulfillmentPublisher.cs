@@ -7,8 +7,8 @@ using Microsoft.Extensions.Options;
 namespace ECommerceBackend.API.Messaging
 {
     // Azure Service Bus implementation of IFulfillmentPublisher. Uses a shared ServiceBusClient
-    // (registered as a singleton with DefaultAzureCredential — passwordless Entra ID auth).
-    public class ServiceBusFulfillmentPublisher : IFulfillmentPublisher
+    // (registered as a singleton with DefaultAzureCredential ï¿½ passwordless Entra ID auth).
+    public class ServiceBusFulfillmentPublisher : IFulfillmentPublisher, IAsyncDisposable
     {
         private readonly ServiceBusSender _sender;
 
@@ -23,11 +23,16 @@ namespace ECommerceBackend.API.Messaging
             var sbMessage = new ServiceBusMessage(body)
             {
                 ContentType = "application/json",
-                // orderId as MessageId gives a natural de-dupe / traceability key.
-                MessageId = message.OrderId.ToString()
+                MessageId = message.OrderId.ToString(),
+                CorrelationId = message.OrderId.ToString(),
+                Subject = nameof(OrderFulfillmentMessage)
             };
+            sbMessage.ApplicationProperties["OrderId"] = message.OrderId.ToString();
+            sbMessage.ApplicationProperties["EventType"] = nameof(OrderFulfillmentMessage);
 
             await _sender.SendMessageAsync(sbMessage, cancellationToken);
         }
+
+        public ValueTask DisposeAsync() => _sender.DisposeAsync();
     }
 }

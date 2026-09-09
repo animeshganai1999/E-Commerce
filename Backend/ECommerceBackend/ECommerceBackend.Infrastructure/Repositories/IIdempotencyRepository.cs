@@ -1,17 +1,52 @@
 ﻿namespace ECommerceBackend.Infrastructure.Repositories
 {
+    public enum IdempotencyRecordState
+    {
+        Processing,
+        Completed
+    }
+
+    public sealed record IdempotencyResponse(
+        int StatusCode,
+        string? ContentType,
+        byte[] Body,
+        Dictionary<string, string[]> Headers);
+
+    public sealed record IdempotencyRecord(
+        IdempotencyRecordState State,
+        string RequestHash,
+        string LeaseId,
+        IdempotencyResponse? Response);
+
+    public enum IdempotencyClaimStatus
+    {
+        Acquired,
+        Existing
+    }
+
+    public sealed record IdempotencyClaim(
+        IdempotencyClaimStatus Status,
+        IdempotencyRecord? Record);
+
     public interface IIdempotencyRepository
     {
-        // Atomically claim the key. true = first time (process), false = already seen.
-        Task<bool> TryClaimAsync(string key, TimeSpan ttl);
+        Task<IdempotencyClaim> ClaimAsync(
+            string key,
+            string requestHash,
+            string leaseId,
+            TimeSpan processingLease);
 
-        // Get the stored state/response ("in-progress", or the cached JSON body).
-        Task<string?> GetAsync(string key);
+        Task<bool> CompleteAsync(
+            string key,
+            IdempotencyRecord processingRecord,
+            IdempotencyResponse response,
+            TimeSpan completedTtl);
 
-        // Overwrite with the final response once processing completes.
-        Task SaveResponseAsync(string key, string response, TimeSpan ttl);
+        Task<bool> RenewAsync(
+            string key,
+            IdempotencyRecord processingRecord,
+            TimeSpan processingLease);
 
-        // Remove the claim (so a failed request can be retried).
-        Task RemoveAsync(string key);
+        Task<bool> ReleaseAsync(string key, IdempotencyRecord processingRecord);
     }
 }

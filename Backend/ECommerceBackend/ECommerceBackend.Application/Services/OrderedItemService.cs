@@ -1,5 +1,6 @@
-﻿using Azure.Storage.Blobs.Models;
-using Azure.Storage.Blobs;
+﻿using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
+using Azure.Storage.Sas;
 using ECommerceBackend.Application.Interfaces;
 using ECommerceBackend.Application.Options;
 using ECommerceBackend.Domain.Entities;
@@ -11,56 +12,126 @@ namespace ECommerceBackend.Application.Services
     public class OrderedItemService : IOrderedItemService
     {
 
-        public readonly IInvoiceRepository _invoiceRepository;
-        private readonly string _blobConnectionString;
+        private readonly IInvoiceRepository _invoiceRepository;
+        private readonly BlobContainerClient _containerClient;
         private readonly string _containerName;
-        public OrderedItemService(IInvoiceRepository invoiceRepository, IOptions<AzureBlobOptions> blobOptions)
+
+        public OrderedItemService(
+            IInvoiceRepository invoiceRepository,
+            BlobServiceClient blobServiceClient,
+            IOptions<AzureBlobOptions> blobOptions)
         {
             _invoiceRepository = invoiceRepository;
-            _blobConnectionString = blobOptions.Value.ConnectionString;
             _containerName = blobOptions.Value.ContainerName;
+            _containerClient = blobServiceClient.GetBlobContainerClient(_containerName);
         }
-        public async Task SaveInvoiceUrlToDB(Guid userId, string pdfUrl, int NumberOfItems, decimal TotalAmount)
+
+        public async Task<UserInvoice> GetOrCreateInvoiceAsync(
+            Guid orderId,
+            Guid userId,
+            int numberOfItems,
+            decimal totalAmount,
+            CancellationToken cancellationToken)
         {
+            var blobClient = _containerClient.GetBlobClient($"invoices/{orderId}.pdf");
             var invoice = new UserInvoice
             {
+                OrderId = orderId,
                 UserId = userId,
                 InvoiceDate = DateTime.UtcNow,
-                InvoiceLink = pdfUrl,
-                NumberOfItems = NumberOfItems,
-                TotalAmount = TotalAmount
+                InvoiceLink = blobClient.Uri.ToString(),
+                NumberOfItems = numberOfItems,
+                TotalAmount = totalAmount
             };
-            await _invoiceRepository.AddAsync(invoice);
+
+            return await _invoiceRepository.GetOrCreateAsync(invoice);
+        }
+
+        public async Task MarkAttemptStartedAsync(
+            UserInvoice invoice,
+            DateTime attemptedAt,
+            CancellationToken cancellationToken)
+        {
+            invoice.AttemptCount += 1;
+            invoice.LastAttemptAt = attemptedAt;
+            invoice.LastError = null;
             await _invoiceRepository.SaveChangesAsync();
         }
-        public async Task<bool> HandleInvoice(Guid userId, byte[] InvoiceBytes, int NumberOfItems, decimal TotalAmount)
+
+        public async Task UploadInvoiceAsync(
+            UserInvoice invoice,
+            byte[] invoiceBytes,
+            DateTime uploadedAt,
+            CancellationToken cancellationToken)
         {
-            string folder = $"{DateTime.UtcNow:yyyy/MM/dd}";
-            string fileName = $"Invoice_{userId}_{DateTime.UtcNow:yyyyMMddHHmmss}.pdf";
-            string blobPath = $"{folder}/{fileName}";
+            if (!invoice.OrderId.HasValue)
+                throw new InvalidOperationException("The invoice does not have an order id.");
 
-            var blobServiceClient = new BlobServiceClient(_blobConnectionString);
-            var containerClient = blobServiceClient.GetBlobContainerClient(_containerName);
-            await containerClient.CreateIfNotExistsAsync(PublicAccessType.Blob);
-            var blobClient = containerClient.GetBlobClient(blobPath);
+            await _containerClient.CreateIfNotExistsAsync(
+                PublicAccessType.None,
+                cancellationToken: cancellationToken);
+            var blobClient = _containerClient.GetBlobClient($"invoices/{invoice.OrderId}.pdf");
+            await using var stream = new MemoryStream(invoiceBytes);
+            await blobClient.UploadAsync(
+                stream,
+                overwrite: true,
+                cancellationToken: cancellationToken);
 
-            using (var stream = new MemoryStream(InvoiceBytes))
-            {
-                await blobClient.UploadAsync(stream, overwrite: true);
-            }
+            invoice.InvoiceLink = blobClient.Uri.ToString();
+            invoice.BlobUploadedAt = uploadedAt;
+            await _invoiceRepository.SaveChangesAsync();
+        }
 
-            string pdfUrl = blobClient.Uri.ToString();
+        public async Task MarkEmailDispatchedAsync(
+            UserInvoice invoice,
+            DateTime dispatchedAt,
+            CancellationToken cancellationToken)
+        {
+            invoice.EmailDispatchedAt = dispatchedAt;
+            await _invoiceRepository.SaveChangesAsync();
+        }
 
-            // Save the PDF URL in the database
-            await SaveInvoiceUrlToDB(userId, pdfUrl, NumberOfItems, TotalAmount);
+        public async Task MarkFulfilledAsync(
+            UserInvoice invoice,
+            DateTime fulfilledAt,
+            CancellationToken cancellationToken)
+        {
+            invoice.FulfilledAt = fulfilledAt;
+            invoice.LastError = null;
+            await _invoiceRepository.SaveChangesAsync();
+        }
 
-            // Return true to indicate success
-            return true;
+        public async Task RecordFailureAsync(
+            UserInvoice invoice,
+            string error,
+            DateTime attemptedAt,
+            CancellationToken cancellationToken)
+        {
+            invoice.LastAttemptAt = attemptedAt;
+            invoice.LastError = error.Length <= 2000 ? error : error[..2000];
+            await _invoiceRepository.SaveChangesAsync();
         }
 
         public async Task<List<UserInvoice>> GetInvoicesByUserIdAsync(Guid userId)
         {
-            return (List<UserInvoice>)await _invoiceRepository.GetInvoicesByUserIdAsync(userId);
+            var invoices = (await _invoiceRepository.GetInvoicesByUserIdAsync(userId)).ToList();
+            var expiresAt = DateTimeOffset.UtcNow.AddMinutes(15);
+
+            foreach (var invoice in invoices.Where(invoice => invoice.OrderId.HasValue))
+            {
+                var blobClient = _containerClient.GetBlobClient($"invoices/{invoice.OrderId}.pdf");
+                if (!blobClient.CanGenerateSasUri)
+                {
+                    throw new InvalidOperationException(
+                        "The configured Blob Storage credentials cannot generate invoice download links.");
+                }
+
+                invoice.InvoiceLink = blobClient.GenerateSasUri(
+                    BlobSasPermissions.Read,
+                    expiresAt).ToString();
+            }
+
+            return invoices;
         }
     }
 }

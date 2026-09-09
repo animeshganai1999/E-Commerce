@@ -238,6 +238,7 @@ namespace ECommerceBackend.Application.Services
             var outboxMessage = new OutboxMessage
             {
                 Id = Guid.NewGuid(),
+                AggregateId = orderId,
                 Type = "OrderConfirmed",
                 Payload = JsonSerializer.Serialize(new { OrderId = orderId }),
                 CreatedAt = DateTime.UtcNow

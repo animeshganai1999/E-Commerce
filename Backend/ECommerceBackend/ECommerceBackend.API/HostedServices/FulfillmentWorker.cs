@@ -3,6 +3,7 @@ using Azure.Messaging.ServiceBus;
 using ECommerceBackend.Application.Interfaces;
 using ECommerceBackend.Application.Messaging;
 using ECommerceBackend.Application.Options;
+using ECommerceBackend.Domain.Entities;
 using ECommerceBackend.Infrastructure.Repositories;
 using Microsoft.Extensions.Options;
 
@@ -40,8 +41,10 @@ namespace ECommerceBackend.API.HostedServices
         {
             _processor = _client.CreateProcessor(_options.FulfillmentQueueName, new ServiceBusProcessorOptions
             {
-                // Process one at a time; let Service Bus handle retries/DLQ on failure.
-                MaxConcurrentCalls = 1,
+                MaxConcurrentCalls = _options.MaxConcurrentCalls,
+                PrefetchCount = _options.PrefetchCount,
+                MaxAutoLockRenewalDuration = TimeSpan.FromMinutes(
+                    _options.MaxAutoLockRenewalMinutes),
                 AutoCompleteMessages = false
             });
 
@@ -58,50 +61,121 @@ namespace ECommerceBackend.API.HostedServices
                 var message = JsonSerializer.Deserialize<OrderFulfillmentMessage>(args.Message.Body.ToString());
                 if (message is null)
                 {
-                    // Unparseable � dead-letter immediately (no point retrying).
-                    await args.DeadLetterMessageAsync(args.Message, "InvalidPayload", "Body could not be deserialized.");
+                    await args.DeadLetterMessageAsync(
+                        args.Message,
+                        "InvalidPayload",
+                        "Body could not be deserialized.",
+                        args.CancellationToken);
                     return;
                 }
 
-                await FulfillAsync(message.OrderId);
+                await FulfillAsync(message.OrderId, args.CancellationToken);
 
-                await args.CompleteMessageAsync(args.Message);
+                await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+            }
+            catch (OperationCanceledException) when (args.CancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Fulfillment failed for message {MessageId}", args.Message.MessageId);
-                // Abandon -> Service Bus redelivers; after MaxDeliveryCount it auto dead-letters.
-                await args.AbandonMessageAsync(args.Message);
+                await args.AbandonMessageAsync(
+                    args.Message,
+                    cancellationToken: args.CancellationToken);
             }
         }
 
-        private async Task FulfillAsync(Guid orderId)
+        private async Task FulfillAsync(Guid orderId, CancellationToken cancellationToken)
         {
             using var scope = _services.CreateScope();
             var orderRepo = scope.ServiceProvider.GetRequiredService<IOrderRepository>();
+            var stockReservation = scope.ServiceProvider.GetRequiredService<IStockReservationRepository>();
             var checkoutService = scope.ServiceProvider.GetRequiredService<ICheckoutService>();
             var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
             var orderedItemService = scope.ServiceProvider.GetRequiredService<IOrderedItemService>();
 
-            var order = await orderRepo.GetByIdAsync(orderId);
-            if (order == null)
+            var lockKey = $"lock:fulfillment:{orderId}";
+            var lockToken = await stockReservation.AcquireLockAsync(
+                lockKey,
+                TimeSpan.FromMinutes(_options.MaxAutoLockRenewalMinutes));
+            if (lockToken is null)
+                throw new InvalidOperationException($"Order {orderId} is already being fulfilled.");
+
+            try
             {
-                _logger.LogWarning("Fulfillment: order {OrderId} not found; skipping.", orderId);
-                return;
+                var order = await orderRepo.GetByIdAsync(orderId);
+                if (order == null)
+                    throw new InvalidOperationException($"Order {orderId} was not found.");
+                if (order.Status != OrderStatus.Confirmed)
+                    throw new InvalidOperationException($"Order {orderId} is not confirmed.");
+
+                var invoice = await orderedItemService.GetOrCreateInvoiceAsync(
+                    orderId,
+                    order.UserId,
+                    order.Items.Sum(item => item.Quantity),
+                    order.TotalAmount,
+                    cancellationToken);
+                if (invoice.FulfilledAt.HasValue)
+                    return;
+
+                await orderedItemService.MarkAttemptStartedAsync(
+                    invoice,
+                    DateTime.UtcNow,
+                    cancellationToken);
+
+                try
+                {
+                    byte[]? pdfBytes = null;
+                    if (!invoice.BlobUploadedAt.HasValue || !invoice.EmailDispatchedAt.HasValue)
+                        pdfBytes = await checkoutService.GenerateInvoiceForOrderAsync(orderId);
+
+                    if (!invoice.BlobUploadedAt.HasValue)
+                    {
+                        await orderedItemService.UploadInvoiceAsync(
+                            invoice,
+                            pdfBytes!,
+                            DateTime.UtcNow,
+                            cancellationToken);
+                    }
+
+                    if (!invoice.EmailDispatchedAt.HasValue)
+                    {
+                        if (!string.IsNullOrWhiteSpace(order.Email))
+                        {
+                            await emailService.SendInvoiceEmailAsync(
+                                _config,
+                                pdfBytes!,
+                                order.Email,
+                                cancellationToken);
+                        }
+
+                        await orderedItemService.MarkEmailDispatchedAsync(
+                            invoice,
+                            DateTime.UtcNow,
+                            cancellationToken);
+                    }
+
+                    await orderedItemService.MarkFulfilledAsync(
+                        invoice,
+                        DateTime.UtcNow,
+                        cancellationToken);
+                    _logger.LogInformation("Fulfillment complete for order {OrderId}", orderId);
+                }
+                catch (Exception ex)
+                {
+                    await orderedItemService.RecordFailureAsync(
+                        invoice,
+                        ex.Message,
+                        DateTime.UtcNow,
+                        cancellationToken);
+                    throw;
+                }
             }
-
-            // 1. Generate the invoice PDF (slow work).
-            var pdfBytes = await checkoutService.GenerateInvoiceForOrderAsync(orderId);
-
-            // 2. Email the invoice.
-            if (!string.IsNullOrWhiteSpace(order.Email))
-                await emailService.SendInvoiceEmailAsync(_config, pdfBytes, order.Email);
-
-            // 3. Persist the invoice record.
-            await orderedItemService.HandleInvoice(
-                order.UserId, pdfBytes, order.Items.Count, order.TotalAmount + 30);
-
-            _logger.LogInformation("Fulfillment complete for order {OrderId}", orderId);
+            finally
+            {
+                await stockReservation.ReleaseLockAsync(lockKey, lockToken);
+            }
         }
 
         private Task HandleErrorAsync(ProcessErrorEventArgs args)

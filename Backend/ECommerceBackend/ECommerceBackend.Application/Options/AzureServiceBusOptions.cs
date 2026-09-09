@@ -1,6 +1,6 @@
 namespace ECommerceBackend.Application.Options
 {
-    // Azure Service Bus settings. Only the fully-qualified namespace is stored — auth is
+    // Azure Service Bus settings. Only the fully-qualified namespace is stored ï¿½ auth is
     // passwordless via Microsoft Entra ID (DefaultAzureCredential), so there is NO connection
     // string secret (consistent with the Key Vault / Azure Managed Redis setup).
     public class AzureServiceBusOptions
@@ -12,5 +12,8 @@ namespace ECommerceBackend.Application.Options
 
         // Queue that carries post-payment fulfillment work (invoice + email + persist).
         public string FulfillmentQueueName { get; set; } = "order-fulfillment";
+        public int MaxConcurrentCalls { get; set; } = 4;
+        public int PrefetchCount { get; set; } = 20;
+        public int MaxAutoLockRenewalMinutes { get; set; } = 10;
     }
 }

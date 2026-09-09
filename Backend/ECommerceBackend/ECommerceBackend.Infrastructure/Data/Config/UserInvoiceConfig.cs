@@ -22,6 +22,10 @@ namespace ECommerceBackend.Infrastructure.Data.Config
                 .HasPrecision(18, 2); // Specify the precision for TotalAmount
             builder.Property(ui => ui.InvoiceLink)
                 .IsRequired(); // Specify that TotalAmount is required
+            builder.Property(ui => ui.LastError).HasMaxLength(2000);
+            builder.HasIndex(ui => ui.OrderId)
+                .IsUnique()
+                .HasFilter("[OrderId] IS NOT NULL");
 
             // Add any additional configurations as needed
             builder.HasOne<User>()
@@ -29,6 +33,11 @@ namespace ECommerceBackend.Infrastructure.Data.Config
                 .HasForeignKey(ui => ui.UserId)
                 .OnDelete(DeleteBehavior.Cascade) // Specify the foreign key relationship with User
                 .HasConstraintName("FK_Users_CustomerInvoices_UserId"); // Specify the constraint name
+
+            builder.HasOne<Order>()
+                .WithMany()
+                .HasForeignKey(ui => ui.OrderId)
+                .OnDelete(DeleteBehavior.NoAction);
         }
     }
 }

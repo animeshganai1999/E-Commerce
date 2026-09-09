@@ -9,7 +9,8 @@ namespace ECommerceBackend.Application.Services
         public async Task SendInvoiceEmailAsync(
             IConfiguration config,
             byte[] pdfBytes,
-            string receiverEmail)
+            string receiverEmail,
+            CancellationToken cancellationToken)
         {
             var senderEmail = config["EmailSettings:SenderEmail"];
             var appPassword = config["EmailSettings:AppPassword"];
@@ -39,7 +40,7 @@ namespace ECommerceBackend.Application.Services
             using var pdfStream = new MemoryStream(pdfBytes);
             mailMessage.Attachments.Add(new Attachment(pdfStream, "Invoice.pdf", "application/pdf"));
 
-            await smtpClient.SendMailAsync(mailMessage);
+            await smtpClient.SendMailAsync(mailMessage, cancellationToken);
         }
     }
 }

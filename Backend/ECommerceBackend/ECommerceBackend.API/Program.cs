@@ -103,10 +103,23 @@ builder.Services.AddOptions<AzureServiceBusOptions>()
 builder.Services.AddSingleton(sp =>
 {
     var options = sp.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
-    return new ServiceBusClient(options.FullyQualifiedNamespace, new DefaultAzureCredential());
+    return new ServiceBusClient(
+        options.FullyQualifiedNamespace,
+        new DefaultAzureCredential(),
+        new ServiceBusClientOptions
+        {
+            RetryOptions = new ServiceBusRetryOptions
+            {
+                Mode = ServiceBusRetryMode.Exponential,
+                Delay = TimeSpan.FromSeconds(1),
+                MaxDelay = TimeSpan.FromSeconds(30),
+                MaxRetries = 5,
+                TryTimeout = TimeSpan.FromSeconds(60)
+            }
+        });
 });
 
-builder.Services.AddScoped<IFulfillmentPublisher, ServiceBusFulfillmentPublisher>();
+builder.Services.AddSingleton<IFulfillmentPublisher, ServiceBusFulfillmentPublisher>();
 
 // Redis connection (Azure Managed Redis - passwordless via Microsoft Entra ID / Managed Identity)
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>

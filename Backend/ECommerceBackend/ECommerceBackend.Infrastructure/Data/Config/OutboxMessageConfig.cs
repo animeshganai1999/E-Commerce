@@ -13,9 +13,12 @@ namespace ECommerceBackend.Infrastructure.Data.Config
             builder.Property(x => x.Type).IsRequired().HasMaxLength(200);
             builder.Property(x => x.Payload).IsRequired();
             builder.Property(x => x.CreatedAt).IsRequired();
+            builder.Property(x => x.Error).HasMaxLength(2000);
 
-            // Index unprocessed messages for the poller's query.
-            builder.HasIndex(x => x.ProcessedAt);
+            builder.HasIndex(x => new { x.Type, x.AggregateId })
+                .IsUnique()
+                .HasFilter("[AggregateId] IS NOT NULL");
+            builder.HasIndex(x => new { x.ProcessedAt, x.FailedAt, x.NextAttemptAt, x.CreatedAt });
         }
     }
 }
