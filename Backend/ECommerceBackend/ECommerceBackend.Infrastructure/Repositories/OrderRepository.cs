@@ -24,16 +24,6 @@ namespace ECommerceBackend.Infrastructure.Repositories
                 .FirstOrDefaultAsync(o => o.Id == orderId);
         }
 
-        public async Task UpdateStatusAsync(Guid orderId, OrderStatus status, DateTime? confirmedAt = null)
-        {
-            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
-            if (order == null) return;
-
-            order.Status = status;
-            if (confirmedAt.HasValue)
-                order.ConfirmedAt = confirmedAt;
-        }
-
         public async Task MarkStockSettledAsync(Guid orderId, DateTime settledAt)
         {
             var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
@@ -56,23 +46,19 @@ namespace ECommerceBackend.Infrastructure.Repositories
                 return OrderTransitionResult.NotFound;
             if (order.UserId != userId)
                 return OrderTransitionResult.Forbidden;
-            if (order.Status == OrderStatus.Confirmed)
-                return OrderTransitionResult.AlreadyConfirmed;
-            if (order.Status is OrderStatus.Failed or OrderStatus.Cancelled)
-                return OrderTransitionResult.AlreadyFailed;
 
             try
             {
-                if (order.ReservationExpiresAt <= confirmedAt)
+                var transition = order.TryConfirm(confirmedAt);
+                if (transition == OrderTransitionResult.Expired)
                 {
-                    order.Status = OrderStatus.Failed;
                     await _context.SaveChangesAsync();
                     await transaction.CommitAsync();
                     return OrderTransitionResult.Expired;
                 }
+                if (transition != OrderTransitionResult.Succeeded)
+                    return transition;
 
-                order.Status = OrderStatus.Confirmed;
-                order.ConfirmedAt = confirmedAt;
                 await _context.OutboxMessages.AddAsync(outboxMessage);
 
                 await _context.SaveChangesAsync();
@@ -111,7 +97,16 @@ namespace ECommerceBackend.Infrastructure.Repositories
             if (order.ReservationExpiresAt > asOfUtc)
                 return ExpiredReservationAction.Skip;
 
-            order.Status = OrderStatus.Failed;
+            var transition = order.TryFail();
+            if (transition != OrderTransitionResult.Succeeded)
+            {
+                return transition switch
+                {
+                    OrderTransitionResult.AlreadyConfirmed => ExpiredReservationAction.Confirm,
+                    OrderTransitionResult.AlreadyFailed => ExpiredReservationAction.Release,
+                    _ => ExpiredReservationAction.Skip
+                };
+            }
 
             try
             {
@@ -143,12 +138,9 @@ namespace ECommerceBackend.Infrastructure.Repositories
                 return OrderTransitionResult.NotFound;
             if (order.UserId != userId)
                 return OrderTransitionResult.Forbidden;
-            if (order.Status == OrderStatus.Confirmed)
-                return OrderTransitionResult.AlreadyConfirmed;
-            if (order.Status is OrderStatus.Failed or OrderStatus.Cancelled)
-                return OrderTransitionResult.AlreadyFailed;
-
-            order.Status = OrderStatus.Failed;
+            var transition = order.TryFail();
+            if (transition != OrderTransitionResult.Succeeded)
+                return transition;
 
             try
             {

@@ -1,21 +1,37 @@
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Security.Claims;
+using ECommerceBackend.API.Controllers;
+using ECommerceBackend.Application.Constants;
 using ECommerceBackend.Application.DTOs;
 using ECommerceBackend.Application.Exceptions;
+using ECommerceBackend.Application.Interfaces;
 using ECommerceBackend.Application.Models;
 using ECommerceBackend.Application.Services;
 using ECommerceBackend.Domain.Entities;
 using ECommerceBackend.Infrastructure.Repositories;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
 
 var tests = new (string Name, Func<Task> Run)[]
 {
     ("Cart uses authenticated user and catalog pricing", CartUsesAuthenticatedUserAndCatalogPricing),
     ("Checkout uses authenticated user and catalog pricing", CheckoutUsesAuthenticatedUserAndCatalogPricing),
     ("Checkout confirmation rejects another user's order", ConfirmationRejectsAnotherUsersOrder),
+    ("Checkout failure rejects another user's order", FailureRejectsAnotherUsersOrder),
     ("Duplicate confirmation is idempotent", DuplicateConfirmationIsIdempotent),
+    ("Concurrent duplicate confirmation is idempotent", ConcurrentDuplicateConfirmationIsIdempotent),
     ("Repeated failed payment releases stock once", RepeatedFailedPaymentReleasesStockOnce),
     ("Expired confirmation releases stock and conflicts", ExpiredConfirmationReleasesStockAndConflicts),
-    ("Redis release script is conditional", RedisReleaseScriptIsConditional)
+    ("Redis release script is conditional", RedisReleaseScriptIsConditional),
+    ("Cart rejects invalid product and quantity", CartRejectsInvalidProductAndQuantity),
+    ("Cart rejects adding an existing product", CartRejectsAddingExistingProduct),
+    ("Cart enforces distinct product limit", CartEnforcesDistinctProductLimit),
+    ("Missing reservation cannot confirm order", MissingReservationCannotConfirmOrder),
+    ("Order terminal transitions are one-way", OrderTerminalTransitionsAreOneWay),
+    ("Authenticated controllers use JWT identity", AuthenticatedControllersUseJwtIdentity),
+    ("Authenticated write models expose no user or price fields", AuthenticatedWriteModelsAreServerOwned)
 };
 
 var failures = new List<string>();
@@ -121,6 +137,23 @@ static async Task ConfirmationRejectsAnotherUsersOrder()
     AssertEqual(0, orderRepository.ConfirmCalls, "The repository transition must not run for another user.");
 }
 
+static async Task FailureRejectsAnotherUsersOrder()
+{
+    var ownerId = Guid.NewGuid();
+    var attackerId = Guid.NewGuid();
+    var orderRepository = new FakeOrderRepository
+    {
+        Order = CreateOrder(ownerId)
+    };
+    var service = CreateCheckoutService(orderRepository, new FakeStockReservationRepository());
+
+    await AssertThrowsAsync<ForbiddenAccessException>(
+        () => service.ReleaseStockAsync(orderRepository.Order.Id, attackerId));
+
+    AssertEqual(0, orderRepository.FailCalls,
+        "The failure transition must not run for another user.");
+}
+
 static async Task DuplicateConfirmationIsIdempotent()
 {
     var ownerId = Guid.NewGuid();
@@ -129,13 +162,36 @@ static async Task DuplicateConfirmationIsIdempotent()
         Order = CreateOrder(ownerId),
         ConfirmResult = OrderTransitionResult.AlreadyConfirmed
     };
+    orderRepository.Order.Status = OrderStatus.Confirmed;
     var service = CreateCheckoutService(orderRepository, new FakeStockReservationRepository());
 
     await service.ConfirmStockAsync(orderRepository.Order.Id, ownerId);
 
-    AssertEqual(1, orderRepository.ConfirmCalls, "The duplicate confirmation should be checked once.");
+    AssertEqual(0, orderRepository.ConfirmCalls,
+        "A duplicate confirmation must not execute another transition.");
+    AssertEqual<OutboxMessage?>(null, orderRepository.LastOutboxMessage,
+        "A duplicate confirmation must not create another outbox event.");
+}
+
+static async Task ConcurrentDuplicateConfirmationIsIdempotent()
+{
+    var ownerId = Guid.NewGuid();
+    var order = CreateOrder(ownerId);
+    var orderRepository = new FakeOrderRepository
+    {
+        Order = order,
+        ConfirmResult = OrderTransitionResult.AlreadyConfirmed
+    };
+    var stockRepository = new FakeStockReservationRepository();
+    stockRepository.AddReservation(order.Id, 5, 2);
+    var service = CreateCheckoutService(orderRepository, stockRepository);
+
+    await service.ConfirmStockAsync(order.Id, ownerId);
+
+    AssertEqual(1, orderRepository.ConfirmCalls,
+        "A concurrent duplicate must reach the conditional repository transition once.");
     AssertEqual("OrderConfirmed", orderRepository.LastOutboxMessage?.Type,
-        "Confirmation must use the expected outbox event.");
+        "The attempted transition must use the confirmation event type.");
 }
 
 static async Task RepeatedFailedPaymentReleasesStockOnce()
@@ -197,7 +253,238 @@ static Task RedisReleaseScriptIsConditional()
     Assert(script.Contains("return 0", StringComparison.Ordinal),
         "The release script must no-op when the reservation is absent.");
 
+    var confirmField = typeof(StockReservationRepository)
+        .GetField("ConfirmScript", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("ConfirmScript was not found.");
+    var confirmScript = confirmField.GetRawConstantValue() as string
+        ?? throw new Exception("ConfirmScript is not a constant string.");
+    Assert(confirmScript.Contains("GET", StringComparison.Ordinal),
+        "Confirmation must inspect the reservation key.");
+    Assert(confirmScript.Contains("return 0", StringComparison.Ordinal),
+        "Confirmation must report a missing reservation without mutating it.");
+
     return Task.CompletedTask;
+}
+
+static async Task CartRejectsInvalidProductAndQuantity()
+{
+    var userId = Guid.NewGuid();
+    var service = new CartService(
+        new FakeCartRepository(),
+        new FakeCartCache(),
+        new FakeProductRepository());
+
+    await AssertThrowsAsync<RequestValidationException>(() =>
+        service.ApplyCartDiffAsync(
+            userId,
+            new CartDiffDTO
+            {
+                Added =
+                [
+                    new CartItemDTO
+                    {
+                        ProductId = 99,
+                        Quantity = CartPolicy.MaxQuantityPerItem + 1
+                    }
+                ]
+            }));
+
+    await AssertThrowsAsync<RequestValidationException>(() =>
+        service.ApplyCartDiffAsync(
+            userId,
+            new CartDiffDTO
+            {
+                Updated = [new CartItemDTO { ProductId = 99, Quantity = 1 }]
+            }));
+}
+
+static async Task CartRejectsAddingExistingProduct()
+{
+    var userId = Guid.NewGuid();
+    var service = new CartService(
+        new FakeCartRepository(
+            new CartItem
+            {
+                UserId = userId,
+                ProductId = 7,
+                Quantity = CartPolicy.MaxQuantityPerItem,
+                UnitPrice = 1,
+                Description = "Existing"
+            }),
+        new FakeCartCache(),
+        new FakeProductRepository(
+            new Product
+            {
+                Id = 7,
+                Title = "Existing",
+                Price = 1,
+                StockQuantity = 1000
+            }));
+
+    await AssertThrowsAsync<RequestValidationException>(() =>
+        service.ApplyCartDiffAsync(
+            userId,
+            new CartDiffDTO
+            {
+                Added =
+                [
+                    new CartItemDTO
+                    {
+                        ProductId = 7,
+                        Quantity = CartPolicy.MaxQuantityPerItem
+                    }
+                ]
+            }));
+}
+
+static async Task CartEnforcesDistinctProductLimit()
+{
+    var userId = Guid.NewGuid();
+    var existingItems = Enumerable.Range(1, CartPolicy.MaxDistinctItems)
+        .Select(productId => new CartItem
+        {
+            UserId = userId,
+            ProductId = productId,
+            Quantity = 1,
+            UnitPrice = 1,
+            Description = $"Product {productId}"
+        })
+        .ToArray();
+    var service = new CartService(
+        new FakeCartRepository(existingItems),
+        new FakeCartCache(),
+        new FakeProductRepository(
+            new Product
+            {
+                Id = CartPolicy.MaxDistinctItems + 1,
+                Title = "Extra product",
+                Price = 1,
+                StockQuantity = 1
+            }));
+
+    await AssertThrowsAsync<RequestValidationException>(() =>
+        service.ApplyCartDiffAsync(
+            userId,
+            new CartDiffDTO
+            {
+                Added =
+                [
+                    new CartItemDTO
+                    {
+                        ProductId = CartPolicy.MaxDistinctItems + 1,
+                        Quantity = 1
+                    }
+                ]
+            }));
+}
+
+static async Task MissingReservationCannotConfirmOrder()
+{
+    var ownerId = Guid.NewGuid();
+    var orderRepository = new FakeOrderRepository
+    {
+        Order = CreateOrder(ownerId)
+    };
+    var service = CreateCheckoutService(orderRepository, new FakeStockReservationRepository());
+
+    await AssertThrowsAsync<OrderStateConflictException>(
+        () => service.ConfirmStockAsync(orderRepository.Order.Id, ownerId));
+
+    AssertEqual(0, orderRepository.ConfirmCalls,
+        "An order without its Redis reservation must not be confirmed or create an outbox event.");
+}
+
+static Task OrderTerminalTransitionsAreOneWay()
+{
+    var confirmed = CreateOrder(Guid.NewGuid());
+    AssertEqual(OrderTransitionResult.Succeeded, confirmed.TryConfirm(DateTime.UtcNow),
+        "A pending order must be confirmable.");
+    AssertEqual(OrderTransitionResult.AlreadyConfirmed, confirmed.TryFail(),
+        "A confirmed order must not transition to failed.");
+    AssertEqual(OrderStatus.Confirmed, confirmed.Status,
+        "A failed callback must not change a confirmed order.");
+
+    var failed = CreateOrder(Guid.NewGuid());
+    AssertEqual(OrderTransitionResult.Succeeded, failed.TryFail(),
+        "A pending order must be fail-able.");
+    AssertEqual(OrderTransitionResult.AlreadyFailed, failed.TryConfirm(DateTime.UtcNow),
+        "A failed order must not transition to confirmed.");
+    AssertEqual(OrderStatus.Failed, failed.Status,
+        "A successful callback must not change a failed order.");
+
+    return Task.CompletedTask;
+}
+
+static async Task AuthenticatedControllersUseJwtIdentity()
+{
+    var userId = Guid.NewGuid();
+    var cartService = new RecordingCartService();
+    var cartController = new CartController(
+        NullLogger<CartController>.Instance,
+        null!,
+        cartService);
+    SetAuthenticatedUser(cartController, userId);
+    await cartController.UpdateCart(new CartDiffDTO());
+    await cartController.GetCart();
+    AssertEqual(userId, cartService.LastUserId,
+        "Cart endpoints must use the JWT user identifier.");
+
+    var checkoutService = new RecordingCheckoutService();
+    var checkoutController = new CheckoutController(checkoutService);
+    SetAuthenticatedUser(checkoutController, userId);
+    await checkoutController.Begin(
+        new BeginCheckoutModel { OrderDetails = CreateOrderDetails() });
+    AssertEqual(userId, checkoutService.LastUserId,
+        "Checkout must use the JWT user identifier.");
+
+    var paymentController = new PaymentController(
+        checkoutService,
+        NullLogger<PaymentController>.Instance);
+    SetAuthenticatedUser(paymentController, userId);
+    await paymentController.Pay(new PaymentRequest { OrderId = Guid.NewGuid(), Success = true });
+    AssertEqual(userId, checkoutService.LastUserId,
+        "Successful payment must use the JWT user identifier.");
+    await paymentController.Pay(new PaymentRequest { OrderId = Guid.NewGuid(), Success = false });
+    AssertEqual(userId, checkoutService.LastUserId,
+        "Failed payment must use the JWT user identifier.");
+
+    var orderedItemService = new RecordingOrderedItemService();
+    var orderedItemsController = new OrderedItemsController(orderedItemService);
+    SetAuthenticatedUser(orderedItemsController, userId);
+    await orderedItemsController.GetInvoiceByUserId();
+    AssertEqual(userId, orderedItemService.LastUserId,
+        "Invoice reads must use the JWT user identifier.");
+}
+
+static Task AuthenticatedWriteModelsAreServerOwned()
+{
+    var cartProperties = typeof(CartItemDTO).GetProperties()
+        .Select(property => property.Name)
+        .OrderBy(name => name)
+        .ToArray();
+    AssertEqual("ProductId,Quantity", string.Join(',', cartProperties),
+        "Cart writes must accept only product id and quantity.");
+
+    Assert(typeof(BeginCheckoutModel).GetProperty("UserId") is null,
+        "Checkout requests must not accept a user id.");
+    Assert(typeof(PaymentRequest).GetProperty("UserId") is null,
+        "Payment requests must not accept a user id.");
+
+    return Task.CompletedTask;
+}
+
+static void SetAuthenticatedUser(ControllerBase controller, Guid userId)
+{
+    controller.ControllerContext = new ControllerContext
+    {
+        HttpContext = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(
+                new ClaimsIdentity(
+                    [new Claim(ClaimTypes.NameIdentifier, userId.ToString())],
+                    "Test"))
+        }
+    };
 }
 
 static CheckoutService CreateCheckoutService(
@@ -311,6 +598,8 @@ sealed class FakeCartRepository : ICartRepository
     public Task<CartItem?> GetAsync(Expression<Func<CartItem, bool>> filter) =>
         Task.FromResult(Items.AsQueryable().FirstOrDefault(filter));
 
+    public Task ExecuteInSerializableTransactionAsync(Func<Task> operation) => operation();
+
     public Task<CartItem> GetByIdAsync(int id) =>
         Task.FromResult(Items.Single(item => item.Id == id));
 
@@ -420,6 +709,7 @@ sealed class FakeOrderRepository : IOrderRepository
     public OrderTransitionResult ConfirmResult { get; set; } = OrderTransitionResult.Succeeded;
     public Queue<OrderTransitionResult> FailResults { get; set; } = [];
     public int ConfirmCalls { get; private set; }
+    public int FailCalls { get; private set; }
     public OutboxMessage? LastOutboxMessage { get; private set; }
 
     public Task AddAsync(Order order)
@@ -444,14 +734,12 @@ sealed class FakeOrderRepository : IOrderRepository
 
     public Task<OrderTransitionResult> FailAsync(Guid orderId, Guid userId)
     {
+        FailCalls++;
         var result = FailResults.Count > 0
             ? FailResults.Dequeue()
             : OrderTransitionResult.Succeeded;
         return Task.FromResult(result);
     }
-
-    public Task UpdateStatusAsync(Guid orderId, OrderStatus status, DateTime? confirmedAt = null) =>
-        Task.CompletedTask;
 
     public Task MarkStockSettledAsync(Guid orderId, DateTime settledAt) =>
         Task.CompletedTask;
@@ -504,10 +792,12 @@ sealed class FakeStockReservationRepository : IStockReservationRepository
         return Task.FromResult(ReserveResult.Success);
     }
 
-    public Task ConfirmAsync(Guid orderId, int productId, int quantity)
+    public Task<bool> ReservationExistsAsync(Guid orderId, int productId) =>
+        Task.FromResult(_reservations.ContainsKey((orderId, productId)));
+
+    public Task<bool> ConfirmAsync(Guid orderId, int productId, int quantity)
     {
-        _reservations.Remove((orderId, productId));
-        return Task.CompletedTask;
+        return Task.FromResult(_reservations.Remove((orderId, productId)));
     }
 
     public Task ReleaseAsync(Guid orderId, int productId, int quantity)
@@ -567,4 +857,72 @@ sealed class FakeStockReservationRepository : IStockReservationRepository
         _reservations.Clear();
         return Task.CompletedTask;
     }
+}
+
+sealed class RecordingCartService : ICartService
+{
+    public Guid LastUserId { get; private set; }
+
+    public Task ApplyCartDiffAsync(Guid userId, CartDiffDTO diff)
+    {
+        LastUserId = userId;
+        return Task.CompletedTask;
+    }
+
+    public Task<IEnumerable<CartItem>> GetCartByUserIdAsync(Guid userId)
+    {
+        LastUserId = userId;
+        return Task.FromResult<IEnumerable<CartItem>>([]);
+    }
+}
+
+sealed class RecordingCheckoutService : ICheckoutService
+{
+    public Guid LastUserId { get; private set; }
+
+    public Task<BeginCheckoutResult> BeginCheckoutAsync(Guid userId, BeginCheckoutModel model)
+    {
+        LastUserId = userId;
+        return Task.FromResult(new BeginCheckoutResult());
+    }
+
+    public Task<byte[]> GenerateInvoiceForOrderAsync(Guid orderId) =>
+        Task.FromResult(Array.Empty<byte>());
+
+    public Task ReleaseStockAsync(Guid orderId, Guid userId)
+    {
+        LastUserId = userId;
+        return Task.CompletedTask;
+    }
+
+    public Task ConfirmStockAsync(Guid orderId, Guid userId)
+    {
+        LastUserId = userId;
+        return Task.CompletedTask;
+    }
+}
+
+sealed class RecordingOrderedItemService : IOrderedItemService
+{
+    public Guid LastUserId { get; private set; }
+
+    public Task<List<UserInvoice>> GetInvoicesByUserIdAsync(Guid userId)
+    {
+        LastUserId = userId;
+        return Task.FromResult(new List<UserInvoice>());
+    }
+
+    public Task<bool> HandleInvoice(
+        Guid userId,
+        byte[] InvoiceBytes,
+        int NumberOfItems,
+        decimal TotalAmount) =>
+        Task.FromResult(true);
+
+    public Task SaveInvoiceUrlToDB(
+        Guid userId,
+        string pdfUrl,
+        int NumberOfItems,
+        decimal TotalAmount) =>
+        Task.CompletedTask;
 }

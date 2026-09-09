@@ -40,6 +40,13 @@ namespace ECommerceBackend.Infrastructure.Repositories
 
         public async Task<ReserveResult> TryReserveAsync(Guid orderId, int productId, int quantity, TimeSpan ttl)
         {
+            if (productId <= 0)
+                throw new ArgumentOutOfRangeException(nameof(productId), "Product identifiers must be positive.");
+            if (quantity <= 0)
+                throw new ArgumentOutOfRangeException(nameof(quantity), "Reservation quantities must be positive.");
+            if (ttl <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(ttl), "Reservation TTL must be positive.");
+
             var expiryUnix = DateTimeOffset.UtcNow.Add(ttl).ToUnixTimeSeconds();
             var member = $"{orderId}:{productId}:{quantity}";
 
@@ -68,13 +75,25 @@ namespace ECommerceBackend.Infrastructure.Repositories
             };
         }
 
+        public async Task<bool> ReservationExistsAsync(Guid orderId, int productId)
+        {
+            return await _db.KeyExistsAsync(ReservationKey(orderId, productId));
+        }
+
+        private const string ConfirmScript = @"
+            if redis.call('GET', KEYS[1]) == false then return 0 end
+            redis.call('DEL', KEYS[1])
+            return 1";
+
         // ---- CONFIRM: reservation becomes permanent, remove from expiry queue ----
-        public async Task ConfirmAsync(Guid orderId, int productId, int quantity)
+        public async Task<bool> ConfirmAsync(Guid orderId, int productId, int quantity)
         {
             var member = $"{orderId}:{productId}:{quantity}";
-            // Single-key ops (different slots on cluster) -> issue separately.
-            await _db.KeyDeleteAsync(ReservationKey(orderId, productId));
+            var confirmed = (long)await _db.ScriptEvaluateAsync(
+                ConfirmScript,
+                new RedisKey[] { ReservationKey(orderId, productId) });
             await _db.SortedSetRemoveAsync(IndexKey, member);
+            return confirmed == 1;
         }
 
         // ---- RELEASE: return stock + cleanup (payment failed / cancelled) ----

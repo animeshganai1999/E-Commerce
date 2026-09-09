@@ -44,8 +44,18 @@ namespace ECommerceBackend.Application.Services
             var cartItems = (await _cartRepository.GetCartByUserIdAsync(userId)).ToList();
             if (cartItems.Count == 0)
                 throw new Exception("No items found in the cart.");
-            if (cartItems.Any(item => item.Quantity <= 0))
-                throw new ArgumentException("Cart quantities must be greater than zero.");
+            if (cartItems.Count > CartPolicy.MaxDistinctItems)
+            {
+                throw new RequestValidationException(
+                    nameof(CartItem),
+                    $"A cart can contain at most {CartPolicy.MaxDistinctItems} distinct products.");
+            }
+            if (cartItems.Any(item => item.Quantity is <= 0 or > CartPolicy.MaxQuantityPerItem))
+            {
+                throw new RequestValidationException(
+                    nameof(CartItem.Quantity),
+                    $"Quantity must be between 1 and {CartPolicy.MaxQuantityPerItem}.");
+            }
 
             var products = (await _productRepository.GetProductsByIdsAsync(
                     cartItems.Select(item => item.ProductId)))
@@ -56,7 +66,11 @@ namespace ECommerceBackend.Application.Services
                 .Cast<int?>()
                 .FirstOrDefault(productId => !products.ContainsKey(productId!.Value));
             if (missingProductId.HasValue)
-                throw new KeyNotFoundException($"Product {missingProductId.Value} was not found.");
+            {
+                throw new RequestValidationException(
+                    nameof(CartItem.ProductId),
+                    $"Product {missingProductId.Value} was not found.");
+            }
 
             var orderId = Guid.NewGuid();
             var now = DateTime.UtcNow;
@@ -215,6 +229,10 @@ namespace ECommerceBackend.Application.Services
                 throw new KeyNotFoundException($"Order {orderId} was not found.");
             if (order.UserId != userId)
                 throw new ForbiddenAccessException("You are not authorized to modify this order.");
+            if (order.Status == OrderStatus.Confirmed)
+                return;
+            if (order.Status is OrderStatus.Failed or OrderStatus.Cancelled)
+                throw new OrderStateConflictException("A failed order cannot be confirmed.");
 
             // Enqueue fulfillment (invoice + email + stock settle) via the outbox.
             var outboxMessage = new OutboxMessage
@@ -225,13 +243,34 @@ namespace ECommerceBackend.Application.Services
                 CreatedAt = DateTime.UtcNow
             };
 
-            var confirmedAt = DateTime.UtcNow;
-            string? lockToken = null;
-            if (order.ReservationExpiresAt <= confirmedAt)
-                lockToken = await AcquireStockMaintenanceLockAsync();
+            var lockToken = await AcquireStockMaintenanceLockAsync();
 
             try
             {
+                var confirmedAt = DateTime.UtcNow;
+                var hasAllReservations = true;
+                foreach (var item in order.Items)
+                {
+                    if (!await _stockReservation.ReservationExistsAsync(orderId, item.ProductId))
+                    {
+                        hasAllReservations = false;
+                        break;
+                    }
+                }
+
+                if (!hasAllReservations)
+                {
+                    var failureResult = await _orderRepository.FailAsync(orderId, userId);
+                    if (failureResult == OrderTransitionResult.AlreadyConfirmed)
+                        return;
+
+                    foreach (var item in order.Items)
+                        await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
+
+                    throw new OrderStateConflictException(
+                        "The stock reservation is no longer available.");
+                }
+
                 var result = await _orderRepository.ConfirmWithOutboxAsync(
                     orderId,
                     userId,
@@ -246,7 +285,6 @@ namespace ECommerceBackend.Application.Services
                     throw new KeyNotFoundException($"Order {orderId} was not found.");
                 if (result is OrderTransitionResult.AlreadyFailed or OrderTransitionResult.Expired)
                 {
-                    lockToken ??= await AcquireStockMaintenanceLockAsync();
                     foreach (var item in order.Items)
                         await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
 
@@ -258,8 +296,7 @@ namespace ECommerceBackend.Application.Services
             }
             finally
             {
-                if (lockToken is not null)
-                    await _stockReservation.ReleaseLockAsync(StockMaintenanceLock.Key, lockToken);
+                await _stockReservation.ReleaseLockAsync(StockMaintenanceLock.Key, lockToken);
             }
         }
 

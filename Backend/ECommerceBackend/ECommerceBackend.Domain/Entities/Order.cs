@@ -1,5 +1,4 @@
 using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace ECommerceBackend.Domain.Entities
@@ -27,7 +26,7 @@ namespace ECommerceBackend.Domain.Entities
 
         public DateTime? StockSettledAt { get; set; } // set once the outbox settles stock to SQL (idempotency guard)
 
-        // Billing / contact snapshot captured at checkout — used by the background worker
+        // Billing / contact snapshot captured at checkout ï¿½ used by the background worker
         // to generate the invoice and send the email (so it doesn't depend on the cart).
         public string? FirstName { get; set; }
         public string? LastName { get; set; }
@@ -42,5 +41,38 @@ namespace ECommerceBackend.Domain.Entities
         public byte[]? RowVersion { get; set; } // optimistic concurrency token
 
         public List<OrderLineItem> Items { get; set; } = new();
+
+        public OrderTransitionResult TryConfirm(DateTime confirmedAt)
+        {
+            if (Status == OrderStatus.Confirmed)
+                return OrderTransitionResult.AlreadyConfirmed;
+            if (Status is OrderStatus.Failed or OrderStatus.Cancelled)
+                return OrderTransitionResult.AlreadyFailed;
+            if (Status != OrderStatus.Pending)
+                return OrderTransitionResult.AlreadyFailed;
+
+            if (ReservationExpiresAt <= confirmedAt)
+            {
+                Status = OrderStatus.Failed;
+                return OrderTransitionResult.Expired;
+            }
+
+            Status = OrderStatus.Confirmed;
+            ConfirmedAt = confirmedAt;
+            return OrderTransitionResult.Succeeded;
+        }
+
+        public OrderTransitionResult TryFail()
+        {
+            if (Status == OrderStatus.Confirmed)
+                return OrderTransitionResult.AlreadyConfirmed;
+            if (Status is OrderStatus.Failed or OrderStatus.Cancelled)
+                return OrderTransitionResult.AlreadyFailed;
+            if (Status != OrderStatus.Pending)
+                return OrderTransitionResult.AlreadyFailed;
+
+            Status = OrderStatus.Failed;
+            return OrderTransitionResult.Succeeded;
+        }
     }
 }

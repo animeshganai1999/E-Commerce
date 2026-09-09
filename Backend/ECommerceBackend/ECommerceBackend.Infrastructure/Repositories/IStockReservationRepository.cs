@@ -9,8 +9,11 @@ namespace ECommerceBackend.Infrastructure.Repositories
         // Dual write: DECRBY stock + SET functional key (TTL) + ZADD tracker — atomically.
         Task<ReserveResult> TryReserveAsync(Guid orderId, int productId, int quantity, TimeSpan ttl);
 
-        // Payment success: remove functional key + tracker so sweeper won't reclaim.
-        Task ConfirmAsync(Guid orderId, int productId, int quantity);
+        // Checks the functional reservation key without mutating it.
+        Task<bool> ReservationExistsAsync(Guid orderId, int productId);
+
+        // Payment success: conditionally remove the functional key + tracker.
+        Task<bool> ConfirmAsync(Guid orderId, int productId, int quantity);
 
         // Explicit release (payment failure/cancel): INCRBY stock + cleanup.
         Task ReleaseAsync(Guid orderId, int productId, int quantity);

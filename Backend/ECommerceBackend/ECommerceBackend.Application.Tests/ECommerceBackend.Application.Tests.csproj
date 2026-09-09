@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\ECommerceBackend.API\ECommerceBackend.API.csproj" />
     <ProjectReference Include="..\ECommerceBackend.Application\ECommerceBackend.Application.csproj" />
     <ProjectReference Include="..\ECommerceBackend.Domain\ECommerceBackend.Domain.csproj" />
     <ProjectReference Include="..\ECommerceBackend.Infrastructure\ECommerceBackend.Infrastructure.csproj" />

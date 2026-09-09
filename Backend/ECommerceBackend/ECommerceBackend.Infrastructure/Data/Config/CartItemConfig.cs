@@ -18,6 +18,7 @@ namespace ECommerceBackend.Infrastructure.Data.Config
             builder.Property(ci => ci.Quantity).IsRequired(); // Quantity is required
             builder.Property(ci => ci.ProductId).IsRequired(); // ProductId is required
             builder.Property(ci => ci.UnitPrice).IsRequired().HasPrecision(18,2); // UnitPrice is required
+            builder.HasIndex(ci => new { ci.UserId, ci.ProductId }).IsUnique();
 
             // Some Seed Data [Need to delete]
             //builder.HasData(new List<CartItem>()

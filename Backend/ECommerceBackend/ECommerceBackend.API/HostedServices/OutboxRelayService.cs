@@ -111,7 +111,10 @@ namespace ECommerceBackend.API.HostedServices
                 {
                     foreach (var item in order.Items)
                     {
-                        await stockReservation.ConfirmAsync(orderId, item.ProductId, item.Quantity);
+                        await stockReservation.ConfirmAsync(
+                            orderId,
+                            item.ProductId,
+                            item.Quantity);
                         var deducted = await productRepo.TryDeductStockAsync(item.ProductId, item.Quantity);
                         if (!deducted)
                             throw new InvalidOperationException(

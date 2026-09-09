@@ -23,6 +23,22 @@ namespace ECommerceBackend.API.Infrastructure
             Exception exception,
             CancellationToken cancellationToken)
         {
+            if (exception is RequestValidationException validationException)
+            {
+                _logger.LogWarning(exception, "Request validation failed for {Path}", httpContext.Request.Path);
+                var validationProblem = new ValidationProblemDetails(
+                    validationException.Errors.ToDictionary(error => error.Key, error => error.Value))
+                {
+                    Status = StatusCodes.Status400BadRequest,
+                    Title = "One or more validation errors occurred.",
+                    Instance = httpContext.Request.Path
+                };
+
+                httpContext.Response.StatusCode = validationProblem.Status.Value;
+                await httpContext.Response.WriteAsJsonAsync(validationProblem, cancellationToken);
+                return true;
+            }
+
             var (status, title, detail) = exception switch
             {
                 ForbiddenAccessException => (
