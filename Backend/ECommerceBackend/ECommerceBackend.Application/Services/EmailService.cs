@@ -1,68 +1,45 @@
 ﻿using ECommerceBackend.Application.Interfaces;
-using ECommerceBackend.Application.Models;
 using System.Net.Mail;
 using System.Net;
-using Microsoft.IdentityModel.Tokens;
 
 namespace ECommerceBackend.Application.Services
 {
     public class EmailService : IEmailService
     {
-        public async Task<(bool isSuccess, string errorMessage)> SendEmailAsync(IConfiguration config, ContactRequestModel? request = null, byte[]? pdfBytes = null, string? ReceiverEmail = null)
+        public async Task SendInvoiceEmailAsync(
+            IConfiguration config,
+            byte[] pdfBytes,
+            string receiverEmail)
         {
-            try
+            var senderEmail = config["EmailSettings:SenderEmail"];
+            var appPassword = config["EmailSettings:AppPassword"];
+
+            if (string.IsNullOrWhiteSpace(senderEmail)
+                || string.IsNullOrWhiteSpace(appPassword)
+                || string.IsNullOrWhiteSpace(receiverEmail))
+                throw new InvalidOperationException("Email settings are not properly configured.");
+
+            using var smtpClient = new SmtpClient("smtp.gmail.com")
             {
-                var senderEmail = config["EmailSettings:SenderEmail"];
-                var appPassword = config["EmailSettings:AppPassword"];
-                var receiverEmail = ReceiverEmail ?? config["EmailSettings:ReceiverEmail"];
+                Port = 587,
+                Credentials = new NetworkCredential(senderEmail, appPassword),
+                EnableSsl = true,
+            };
 
-                if (string.IsNullOrWhiteSpace(senderEmail) || string.IsNullOrWhiteSpace(appPassword) || string.IsNullOrWhiteSpace(receiverEmail))
-                {
-                    return (false, "Email settings are not properly configured.");
-                }
-
-                var smtpClient = new SmtpClient("smtp.gmail.com")
-                {
-                    Port = 587,
-                    Credentials = new NetworkCredential(senderEmail, appPassword),
-                    EnableSsl = true,
-                };
-
-                var mailMessage = new MailMessage
-                {
-                    From = new MailAddress(senderEmail)
-                };
-
-                if (request != null)
-                {
-                    // Contact form
-                    mailMessage.Subject = $"Contact Form Submission from {request.Name}";
-                    mailMessage.Body = $"From: {request.Name} <{request.Email}>\n\n{request.Message}";
-                    mailMessage.IsBodyHtml = false;
-                }
-                else if (pdfBytes != null)
-                {
-                    // PDF attachment
-                    mailMessage.Subject = "Please find the attached document";
-                    mailMessage.Body = "Invoice attached.";
-                    var pdfStream = new MemoryStream(pdfBytes);
-                    var attachment = new Attachment(pdfStream, "Invoice.pdf", "application/pdf");
-                    mailMessage.Attachments.Add(attachment);
-                }
-                else
-                {
-                    return (false, "Either request or pdfBytes must be provided.");
-                }
-
-                mailMessage.To.Add(receiverEmail);
-
-                await smtpClient.SendMailAsync(mailMessage);
-                return (true, string.Empty);
-            }
-            catch (Exception ex)
+            using var mailMessage = new MailMessage
             {
-                return (false, ex.Message);
-            }
+                From = new MailAddress(senderEmail),
+                Subject = "Your Shop Core invoice",
+                Body = "Your invoice is attached.",
+                IsBodyHtml = false
+            };
+
+            mailMessage.To.Add(receiverEmail);
+
+            using var pdfStream = new MemoryStream(pdfBytes);
+            mailMessage.Attachments.Add(new Attachment(pdfStream, "Invoice.pdf", "application/pdf"));
+
+            await smtpClient.SendMailAsync(mailMessage);
         }
     }
 }

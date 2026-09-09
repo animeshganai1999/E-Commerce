@@ -1,6 +1,7 @@
 ﻿using ECommerceBackend.Application.Interfaces;
 using ECommerceBackend.Application.Exceptions;
 using ECommerceBackend.Application.Models;
+using ECommerceBackend.Application.Constants;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -8,7 +9,6 @@ using QuestPDF.Drawing;
 using QuestPDF.Elements;
 using ECommerceBackend.Infrastructure.Repositories;
 using ECommerceBackend.Domain.Entities;
-using Microsoft.AspNetCore.SignalR;
 using System.Text.Json;
 
 namespace ECommerceBackend.Application.Services
@@ -21,7 +21,6 @@ namespace ECommerceBackend.Application.Services
         ICartRepository _cartRepository;
         private readonly IOrderRepository _orderRepository;
         private readonly IStockReservationRepository _stockReservation;
-        private readonly IOutboxRepository _outboxRepository;
         private readonly IProductRepository _productRepository;
         private readonly ICartCache _cartCache;
 
@@ -29,74 +28,63 @@ namespace ECommerceBackend.Application.Services
             ICartRepository cartRepository,
             IOrderRepository orderRepository,
             IStockReservationRepository stockReservation,
-            IOutboxRepository outboxRepository,
             IProductRepository productRepository,
             ICartCache cartCache)
         {
             _cartRepository = cartRepository;
             _orderRepository = orderRepository;
             _stockReservation = stockReservation;
-            _outboxRepository = outboxRepository;
             _productRepository = productRepository;
             _cartCache = cartCache;
         }
 
-        public async Task<BeginCheckoutResult> BeginCheckoutAsync(BeginCheckoutModel model)
+        public async Task<BeginCheckoutResult> BeginCheckoutAsync(Guid userId, BeginCheckoutModel model)
         {
             // 1. Load the user's cart (source of the items to reserve + price snapshot).
-            var cartItems = (await _cartRepository.GetCartByUserIdAsync(model.UserId)).ToList();
+            var cartItems = (await _cartRepository.GetCartByUserIdAsync(userId)).ToList();
             if (cartItems.Count == 0)
                 throw new Exception("No items found in the cart.");
+            if (cartItems.Count > CartPolicy.MaxDistinctItems)
+            {
+                throw new RequestValidationException(
+                    nameof(CartItem),
+                    $"A cart can contain at most {CartPolicy.MaxDistinctItems} distinct products.");
+            }
+            if (cartItems.Any(item => item.Quantity is <= 0 or > CartPolicy.MaxQuantityPerItem))
+            {
+                throw new RequestValidationException(
+                    nameof(CartItem.Quantity),
+                    $"Quantity must be between 1 and {CartPolicy.MaxQuantityPerItem}.");
+            }
+
+            var products = (await _productRepository.GetProductsByIdsAsync(
+                    cartItems.Select(item => item.ProductId)))
+                .ToDictionary(product => product.Id);
+
+            var missingProductId = cartItems
+                .Select(item => item.ProductId)
+                .Cast<int?>()
+                .FirstOrDefault(productId => !products.ContainsKey(productId!.Value));
+            if (missingProductId.HasValue)
+            {
+                throw new RequestValidationException(
+                    nameof(CartItem.ProductId),
+                    $"Product {missingProductId.Value} was not found.");
+            }
 
             var orderId = Guid.NewGuid();
             var now = DateTime.UtcNow;
             var expiresAt = now.Add(ReservationWindow);
             var reserved = new List<CartItem>();
-
-            try
-            {
-                // 2. Reserve each line in Redis (the hot path). Lazy-load the stock key from SQL
-                //    on a miss, then retry once so cold/evicted products still reserve correctly.
-                foreach (var item in cartItems)
-                {
-                    var result = await _stockReservation.TryReserveAsync(
-                        orderId, item.ProductId, item.Quantity, ReservationWindow);
-
-                    if (result == ReserveResult.StockMissing)
-                    {
-                        var sqlStock = await _productRepository.GetStockFromSqlAsync(item.ProductId);
-                        if (sqlStock.HasValue)
-                        {
-                            await _stockReservation.PopulateStockIfAbsentAsync(item.ProductId, sqlStock.Value);
-                            result = await _stockReservation.TryReserveAsync(
-                                orderId, item.ProductId, item.Quantity, ReservationWindow);
-                        }
-                    }
-
-                    if (result != ReserveResult.Success)
-                        throw new InsufficientStockException(item.ProductId, item.Quantity);
-
-                    reserved.Add(item);
-                }
-            }
-            catch
-            {
-                // 3. Roll back any reservations already taken so stock isn't leaked on a partial fail.
-                foreach (var item in reserved)
-                    await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
-                throw;
-            }
-
-            // 4. Persist a Pending order with a billing snapshot (used later by the fulfillment worker).
             var details = model.OrderDetails;
             var order = new Order
             {
                 Id = orderId,
-                UserId = model.UserId,
+                UserId = userId,
                 Status = OrderStatus.Pending,
                 CreatedAt = now,
                 ReservationExpiresAt = expiresAt,
-                TotalAmount = cartItems.Sum(i => i.UnitPrice * i.Quantity),
+                TotalAmount = cartItems.Sum(item => products[item.ProductId].Price * item.Quantity),
                 FirstName = details.FirstName,
                 LastName = details.LastName,
                 Email = details.Email,
@@ -110,30 +98,64 @@ namespace ECommerceBackend.Application.Services
                     OrderId = orderId,
                     ProductId = i.ProductId,
                     Quantity = i.Quantity,
-                    UnitPrice = i.UnitPrice,
-                    Description = i.Description
+                    UnitPrice = products[i.ProductId].Price,
+                    Description = products[i.ProductId].Title
                 }).ToList()
             };
 
+            // Reconciliation must not observe the Redis reservation without its matching SQL
+            // order. The shared maintenance lock covers only this consistency boundary.
+            var lockToken = await AcquireStockMaintenanceLockAsync();
             try
             {
-                await _orderRepository.AddAsync(order);
-                await _orderRepository.SaveChangesAsync();
+                try
+                {
+                    // 2. Reserve each line in Redis (the hot path). Lazy-load the stock key from SQL
+                    //    on a miss, then retry once so cold/evicted products still reserve correctly.
+                    foreach (var item in cartItems)
+                    {
+                        var result = await _stockReservation.TryReserveAsync(
+                            orderId, item.ProductId, item.Quantity, ReservationWindow);
+
+                        if (result == ReserveResult.StockMissing)
+                        {
+                            var sqlStock = await _productRepository.GetStockFromSqlAsync(item.ProductId);
+                            if (sqlStock.HasValue)
+                            {
+                                await _stockReservation.PopulateStockIfAbsentAsync(item.ProductId, sqlStock.Value);
+                                result = await _stockReservation.TryReserveAsync(
+                                    orderId, item.ProductId, item.Quantity, ReservationWindow);
+                            }
+                        }
+
+                        if (result != ReserveResult.Success)
+                            throw new InsufficientStockException(item.ProductId, item.Quantity);
+
+                        reserved.Add(item);
+                    }
+
+                    // 3. Persist the Pending order while reconciliation is excluded.
+                    await _orderRepository.AddAsync(order);
+                    await _orderRepository.SaveChangesAsync();
+                }
+                catch
+                {
+                    foreach (var item in reserved)
+                        await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
+                    throw;
+                }
             }
-            catch
+            finally
             {
-                // Order persistence failed after reserving — release the held stock.
-                foreach (var item in reserved)
-                    await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
-                throw;
+                await _stockReservation.ReleaseLockAsync(StockMaintenanceLock.Key, lockToken);
             }
 
-            // 5. Clear the ordered items from the cart so a subsequent checkout doesn't
+            // 4. Clear the ordered items from the cart so a subsequent checkout doesn't
             //    re-order the same items. Invalidate the cached cart to match SQL.
             foreach (var item in cartItems)
-                await _cartRepository.DeleteAsync(x => x.UserId == model.UserId && x.ProductId == item.ProductId);
+                await _cartRepository.DeleteAsync(x => x.UserId == userId && x.ProductId == item.ProductId);
             await _cartRepository.SaveChangesAsync();
-            await _cartCache.InvalidateAsync(model.UserId);
+            await _cartCache.InvalidateAsync(userId);
 
             return new BeginCheckoutResult
             {
@@ -172,36 +194,128 @@ namespace ECommerceBackend.Application.Services
             return BuildInvoicePdf(details, orderItems);
         }
 
-        public async Task ReleaseStockAsync(Guid orderId)
+        public async Task ReleaseStockAsync(Guid orderId, Guid userId)
         {
             var order = await _orderRepository.GetByIdAsync(orderId);
-            if (order == null) return;
+            if (order == null)
+                throw new KeyNotFoundException($"Order {orderId} was not found.");
+            if (order.UserId != userId)
+                throw new ForbiddenAccessException("You are not authorized to modify this order.");
 
-            foreach (var item in order.Items)
-                await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
+            var lockToken = await AcquireStockMaintenanceLockAsync();
+            try
+            {
+                var result = await _orderRepository.FailAsync(orderId, userId);
+                if (result == OrderTransitionResult.AlreadyConfirmed)
+                    throw new OrderStateConflictException("A confirmed order cannot be failed.");
+                if (result == OrderTransitionResult.Forbidden)
+                    throw new ForbiddenAccessException("You are not authorized to modify this order.");
+                if (result == OrderTransitionResult.NotFound)
+                    throw new KeyNotFoundException($"Order {orderId} was not found.");
 
-            await _orderRepository.UpdateStatusAsync(orderId, OrderStatus.Failed);
-            await _orderRepository.SaveChangesAsync();
+                foreach (var item in order.Items)
+                    await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
+            }
+            finally
+            {
+                await _stockReservation.ReleaseLockAsync(StockMaintenanceLock.Key, lockToken);
+            }
         }
 
-        public async Task ConfirmStockAsync(Guid orderId)
+        public async Task ConfirmStockAsync(Guid orderId, Guid userId)
         {
             var order = await _orderRepository.GetByIdAsync(orderId);
-            if (order == null) return;
-
-            await _orderRepository.UpdateStatusAsync(orderId, OrderStatus.Confirmed, DateTime.UtcNow);
+            if (order == null)
+                throw new KeyNotFoundException($"Order {orderId} was not found.");
+            if (order.UserId != userId)
+                throw new ForbiddenAccessException("You are not authorized to modify this order.");
+            if (order.Status == OrderStatus.Confirmed)
+                return;
+            if (order.Status is OrderStatus.Failed or OrderStatus.Cancelled)
+                throw new OrderStateConflictException("A failed order cannot be confirmed.");
 
             // Enqueue fulfillment (invoice + email + stock settle) via the outbox.
-            await _outboxRepository.AddAsync(new OutboxMessage
+            var outboxMessage = new OutboxMessage
             {
                 Id = Guid.NewGuid(),
                 Type = "OrderConfirmed",
                 Payload = JsonSerializer.Serialize(new { OrderId = orderId }),
                 CreatedAt = DateTime.UtcNow
-            });
+            };
 
-            await _orderRepository.SaveChangesAsync();
-            await _outboxRepository.SaveChangesAsync();
+            var lockToken = await AcquireStockMaintenanceLockAsync();
+
+            try
+            {
+                var confirmedAt = DateTime.UtcNow;
+                var hasAllReservations = true;
+                foreach (var item in order.Items)
+                {
+                    if (!await _stockReservation.ReservationExistsAsync(orderId, item.ProductId))
+                    {
+                        hasAllReservations = false;
+                        break;
+                    }
+                }
+
+                if (!hasAllReservations)
+                {
+                    var failureResult = await _orderRepository.FailAsync(orderId, userId);
+                    if (failureResult == OrderTransitionResult.AlreadyConfirmed)
+                        return;
+
+                    foreach (var item in order.Items)
+                        await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
+
+                    throw new OrderStateConflictException(
+                        "The stock reservation is no longer available.");
+                }
+
+                var result = await _orderRepository.ConfirmWithOutboxAsync(
+                    orderId,
+                    userId,
+                    confirmedAt,
+                    outboxMessage);
+
+                if (result == OrderTransitionResult.AlreadyConfirmed)
+                    return;
+                if (result == OrderTransitionResult.Forbidden)
+                    throw new ForbiddenAccessException("You are not authorized to modify this order.");
+                if (result == OrderTransitionResult.NotFound)
+                    throw new KeyNotFoundException($"Order {orderId} was not found.");
+                if (result is OrderTransitionResult.AlreadyFailed or OrderTransitionResult.Expired)
+                {
+                    foreach (var item in order.Items)
+                        await _stockReservation.ReleaseAsync(orderId, item.ProductId, item.Quantity);
+
+                    throw new OrderStateConflictException(
+                        result == OrderTransitionResult.Expired
+                            ? "The stock reservation has expired."
+                            : "A failed order cannot be confirmed.");
+                }
+            }
+            finally
+            {
+                await _stockReservation.ReleaseLockAsync(StockMaintenanceLock.Key, lockToken);
+            }
+        }
+
+        private async Task<string> AcquireStockMaintenanceLockAsync()
+        {
+            const int attempts = 100;
+            for (var attempt = 0; attempt < attempts; attempt++)
+            {
+                var token = await _stockReservation.AcquireLockAsync(
+                    StockMaintenanceLock.Key,
+                    StockMaintenanceLock.Ttl);
+                if (token is not null)
+                    return token;
+
+                await Task.Delay(TimeSpan.FromMilliseconds(100));
+            }
+
+            throw new OrderStateConflictException(
+                "Inventory maintenance is in progress. Retry the payment request.");
         }
 
         private static byte[] BuildInvoicePdf(OrderDetails details, List<OrderItem> orderItems)

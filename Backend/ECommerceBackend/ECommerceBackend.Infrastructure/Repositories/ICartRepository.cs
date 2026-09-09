@@ -8,6 +8,7 @@ namespace ECommerceBackend.Infrastructure.Repositories
         Task<IEnumerable<CartItem>> GetCartByUserIdAsync(Guid userId);
         Task AddRangeAsync(IEnumerable<CartItem> entities);
         Task<CartItem?> GetAsync(Expression<Func<CartItem, bool>> filter);
+        Task ExecuteInSerializableTransactionAsync(Func<Task> operation);
         Task SaveChangesAsync();
     }
 }

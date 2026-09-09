@@ -1,11 +1,12 @@
-﻿namespace ECommerceBackend.Application.DTOs
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace ECommerceBackend.Application.DTOs
 {
     public class CartItemDTO
     {
-        public string? Description { get; set; }
+        [Range(1, int.MaxValue)]
         public int ProductId { get; set; }
+
         public int Quantity { get; set; }
-        public Guid UserId { get; set; }
-        public decimal UnitPrice { get; set; }
     }
 }

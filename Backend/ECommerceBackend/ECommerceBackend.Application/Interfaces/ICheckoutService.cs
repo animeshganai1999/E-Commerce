@@ -6,15 +6,15 @@ namespace ECommerceBackend.Application.Interfaces
     {
         // Step 1 of checkout: reserve stock in Redis + create a Pending order (with a billing
         // snapshot). Throws InsufficientStockException if any item cannot be reserved.
-        Task<BeginCheckoutResult> BeginCheckoutAsync(BeginCheckoutModel model);
+        Task<BeginCheckoutResult> BeginCheckoutAsync(Guid userId, BeginCheckoutModel model);
 
         // Generate an invoice PDF for a previously placed order (off the request path).
         Task<byte[]> GenerateInvoiceForOrderAsync(Guid orderId);
 
         // Payment failed/cancelled: release the reserved stock for the order.
-        Task ReleaseStockAsync(Guid orderId);
+        Task ReleaseStockAsync(Guid orderId, Guid userId);
 
         // Payment succeeded: confirm the order and enqueue fulfillment via the outbox.
-        Task ConfirmStockAsync(Guid orderId);
+        Task ConfirmStockAsync(Guid orderId, Guid userId);
     }
 }

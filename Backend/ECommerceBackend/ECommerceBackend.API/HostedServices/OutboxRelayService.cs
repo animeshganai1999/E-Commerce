@@ -1,4 +1,5 @@
 using ECommerceBackend.Application.Messaging;
+using ECommerceBackend.Application.Constants;
 using ECommerceBackend.Infrastructure.Repositories;
 using System.Text.Json;
 
@@ -24,7 +25,7 @@ namespace ECommerceBackend.API.HostedServices
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            const string lockKey = "lock:outbox-processor";
+            const string outboxLockKey = "lock:outbox-processor";
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
@@ -37,7 +38,9 @@ namespace ECommerceBackend.API.HostedServices
                     var publisher = scope.ServiceProvider.GetRequiredService<IFulfillmentPublisher>();
 
                     // Only one instance relays the outbox per cycle (multi-instance safe).
-                    var lockToken = await stockReservation.AcquireLockAsync(lockKey, TimeSpan.FromSeconds(25));
+                    var lockToken = await stockReservation.AcquireLockAsync(
+                        outboxLockKey,
+                        TimeSpan.FromMinutes(5));
                     if (lockToken is null)
                     {
                         await Task.Delay(_interval, stoppingToken);
@@ -67,7 +70,7 @@ namespace ECommerceBackend.API.HostedServices
                     }
                     finally
                     {
-                        await stockReservation.ReleaseLockAsync(lockKey, lockToken);
+                        await stockReservation.ReleaseLockAsync(outboxLockKey, lockToken);
                     }
                 }
                 catch (Exception ex)
@@ -91,21 +94,42 @@ namespace ECommerceBackend.API.HostedServices
             var order = await orderRepo.GetByIdAsync(orderId);
             if (order == null) return;
 
-            // Idempotency: skip if this order's stock was already settled.
-            if (order.StockSettledAt != null) return;
+            // Keep only Redis/SQL stock mutations under the shared maintenance lock. Service Bus
+            // publication happens afterward so a slow external call cannot block checkouts.
+            var stockLockToken = await stockReservation.AcquireLockAsync(
+                StockMaintenanceLock.Key,
+                StockMaintenanceLock.Ttl);
+            if (stockLockToken is null)
+                throw new InvalidOperationException("Stock maintenance is busy.");
 
-            // 1. Settle stock INLINE: finalize Redis reservation + deduct SQL (fast + critical).
-            foreach (var item in order.Items)
+            try
             {
-                await stockReservation.ConfirmAsync(orderId, item.ProductId, item.Quantity);
-                await productRepo.TryDeductStockAsync(item.ProductId, item.Quantity);
+                order = await orderRepo.GetByIdAsync(orderId);
+                if (order == null) return;
+
+                if (order.StockSettledAt == null)
+                {
+                    foreach (var item in order.Items)
+                    {
+                        await stockReservation.ConfirmAsync(
+                            orderId,
+                            item.ProductId,
+                            item.Quantity);
+                        var deducted = await productRepo.TryDeductStockAsync(item.ProductId, item.Quantity);
+                        if (!deducted)
+                            throw new InvalidOperationException(
+                                $"Unable to settle stock for product {item.ProductId} in order {orderId}.");
+                    }
+
+                    await orderRepo.MarkStockSettledAsync(orderId, DateTime.UtcNow);
+                }
+            }
+            finally
+            {
+                await stockReservation.ReleaseLockAsync(StockMaintenanceLock.Key, stockLockToken);
             }
 
-            // 2. Mark settled (idempotency guard) BEFORE publishing, so a publish retry can't
-            //    re-settle stock. The fulfillment worker has its own idempotency (invoice record).
-            await orderRepo.MarkStockSettledAsync(orderId, DateTime.UtcNow);
-
-            // 3. Hand the SLOW work (invoice PDF + email + persist) to Service Bus.
+            // Always retry publication even when stock was settled by an earlier attempt.
             await publisher.PublishAsync(new OrderFulfillmentMessage(orderId), cancellationToken);
         }
 

@@ -24,16 +24,6 @@ namespace ECommerceBackend.Infrastructure.Repositories
                 .FirstOrDefaultAsync(o => o.Id == orderId);
         }
 
-        public async Task UpdateStatusAsync(Guid orderId, OrderStatus status, DateTime? confirmedAt = null)
-        {
-            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
-            if (order == null) return;
-
-            order.Status = status;
-            if (confirmedAt.HasValue)
-                order.ConfirmedAt = confirmedAt;
-        }
-
         public async Task MarkStockSettledAsync(Guid orderId, DateTime settledAt)
         {
             var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
@@ -43,11 +33,145 @@ namespace ECommerceBackend.Infrastructure.Repositories
             await _context.SaveChangesAsync();
         }
 
-        // Sum of quantities held by Pending (unsettled) orders, grouped by ProductId.
+        public async Task<OrderTransitionResult> ConfirmWithOutboxAsync(
+            Guid orderId,
+            Guid userId,
+            DateTime confirmedAt,
+            OutboxMessage outboxMessage)
+        {
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
+
+            if (order is null)
+                return OrderTransitionResult.NotFound;
+            if (order.UserId != userId)
+                return OrderTransitionResult.Forbidden;
+
+            try
+            {
+                var transition = order.TryConfirm(confirmedAt);
+                if (transition == OrderTransitionResult.Expired)
+                {
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                    return OrderTransitionResult.Expired;
+                }
+                if (transition != OrderTransitionResult.Succeeded)
+                    return transition;
+
+                await _context.OutboxMessages.AddAsync(outboxMessage);
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+                return OrderTransitionResult.Succeeded;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                await transaction.RollbackAsync();
+                _context.ChangeTracker.Clear();
+                var current = await _context.Orders
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.Id == orderId);
+
+                return current?.Status switch
+                {
+                    OrderStatus.Confirmed => OrderTransitionResult.AlreadyConfirmed,
+                    OrderStatus.Failed or OrderStatus.Cancelled => OrderTransitionResult.AlreadyFailed,
+                    _ => throw new DbUpdateConcurrencyException(
+                        $"Order {orderId} changed during confirmation.")
+                };
+            }
+        }
+
+        public async Task<ExpiredReservationAction> ResolveExpiredReservationAsync(
+            Guid orderId,
+            DateTime asOfUtc)
+        {
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
+            if (order is null)
+                return ExpiredReservationAction.Release;
+            if (order.Status == OrderStatus.Confirmed)
+                return ExpiredReservationAction.Confirm;
+            if (order.Status is OrderStatus.Failed or OrderStatus.Cancelled)
+                return ExpiredReservationAction.Release;
+            if (order.ReservationExpiresAt > asOfUtc)
+                return ExpiredReservationAction.Skip;
+
+            var transition = order.TryFail();
+            if (transition != OrderTransitionResult.Succeeded)
+            {
+                return transition switch
+                {
+                    OrderTransitionResult.AlreadyConfirmed => ExpiredReservationAction.Confirm,
+                    OrderTransitionResult.AlreadyFailed => ExpiredReservationAction.Release,
+                    _ => ExpiredReservationAction.Skip
+                };
+            }
+
+            try
+            {
+                await _context.SaveChangesAsync();
+                return ExpiredReservationAction.Release;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                _context.ChangeTracker.Clear();
+                var current = await _context.Orders
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.Id == orderId);
+
+                return current?.Status switch
+                {
+                    null => ExpiredReservationAction.Release,
+                    OrderStatus.Confirmed => ExpiredReservationAction.Confirm,
+                    OrderStatus.Failed or OrderStatus.Cancelled => ExpiredReservationAction.Release,
+                    _ => ExpiredReservationAction.Skip
+                };
+            }
+        }
+
+        public async Task<OrderTransitionResult> FailAsync(Guid orderId, Guid userId)
+        {
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
+
+            if (order is null)
+                return OrderTransitionResult.NotFound;
+            if (order.UserId != userId)
+                return OrderTransitionResult.Forbidden;
+            var transition = order.TryFail();
+            if (transition != OrderTransitionResult.Succeeded)
+                return transition;
+
+            try
+            {
+                await _context.SaveChangesAsync();
+                return OrderTransitionResult.Succeeded;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                _context.ChangeTracker.Clear();
+                var current = await _context.Orders
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.Id == orderId);
+
+                return current?.Status switch
+                {
+                    OrderStatus.Confirmed => OrderTransitionResult.AlreadyConfirmed,
+                    OrderStatus.Failed or OrderStatus.Cancelled => OrderTransitionResult.AlreadyFailed,
+                    _ => throw new DbUpdateConcurrencyException(
+                        $"Order {orderId} changed while being failed.")
+                };
+            }
+        }
+
+        // Sum quantities still represented by Redis reservations. Confirmed orders remain
+        // included until StockSettledAt is written in the same stock-maintenance critical section.
         public async Task<Dictionary<int, int>> GetPendingReservedQuantitiesAsync()
         {
             return await _context.OrderItems
-                .Where(i => i.Order.Status == OrderStatus.Pending)
+                .Where(i => i.Order.StockSettledAt == null
+                            && (i.Order.Status == OrderStatus.Pending
+                                || i.Order.Status == OrderStatus.Confirmed))
                 .GroupBy(i => i.ProductId)
                 .Select(g => new { ProductId = g.Key, Qty = g.Sum(x => x.Quantity) })
                 .ToDictionaryAsync(x => x.ProductId, x => x.Qty);
@@ -60,7 +184,10 @@ namespace ECommerceBackend.Infrastructure.Repositories
             if (ids.Count == 0) return new Dictionary<int, int>();
 
             return await _context.OrderItems
-                .Where(i => i.Order.Status == OrderStatus.Pending && ids.Contains(i.ProductId))
+                .Where(i => i.Order.StockSettledAt == null
+                            && (i.Order.Status == OrderStatus.Pending
+                                || i.Order.Status == OrderStatus.Confirmed)
+                            && ids.Contains(i.ProductId))
                 .GroupBy(i => i.ProductId)
                 .Select(g => new { ProductId = g.Key, Qty = g.Sum(x => x.Quantity) })
                 .ToDictionaryAsync(x => x.ProductId, x => x.Qty);

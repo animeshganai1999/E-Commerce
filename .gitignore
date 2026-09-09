@@ -23,6 +23,7 @@ node_modules
 
 # misc
 .DS_Store
+Backend/ECommerceBackend/improvement.md
 .env.local
 .env.development.local
 .env.test.local

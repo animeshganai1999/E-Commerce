@@ -58,7 +58,7 @@ namespace ECommerceBackend.API.HostedServices
                 var message = JsonSerializer.Deserialize<OrderFulfillmentMessage>(args.Message.Body.ToString());
                 if (message is null)
                 {
-                    // Unparseable — dead-letter immediately (no point retrying).
+                    // Unparseable ï¿½ dead-letter immediately (no point retrying).
                     await args.DeadLetterMessageAsync(args.Message, "InvalidPayload", "Body could not be deserialized.");
                     return;
                 }
@@ -95,7 +95,7 @@ namespace ECommerceBackend.API.HostedServices
 
             // 2. Email the invoice.
             if (!string.IsNullOrWhiteSpace(order.Email))
-                await emailService.SendEmailAsync(_config, pdfBytes: pdfBytes, ReceiverEmail: order.Email);
+                await emailService.SendInvoiceEmailAsync(_config, pdfBytes, order.Email);
 
             // 3. Persist the invoice record.
             await orderedItemService.HandleInvoice(

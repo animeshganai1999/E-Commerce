@@ -1,4 +1,6 @@
-﻿namespace ECommerceBackend.Infrastructure.Repositories
+﻿using ECommerceBackend.Domain.Entities;
+
+namespace ECommerceBackend.Infrastructure.Repositories
 {
     public interface IStockReservationRepository
     {
@@ -7,14 +9,18 @@
         // Dual write: DECRBY stock + SET functional key (TTL) + ZADD tracker — atomically.
         Task<ReserveResult> TryReserveAsync(Guid orderId, int productId, int quantity, TimeSpan ttl);
 
-        // Payment success: remove functional key + tracker so sweeper won't reclaim.
-        Task ConfirmAsync(Guid orderId, int productId, int quantity);
+        // Checks the functional reservation key without mutating it.
+        Task<bool> ReservationExistsAsync(Guid orderId, int productId);
+
+        // Payment success: conditionally remove the functional key + tracker.
+        Task<bool> ConfirmAsync(Guid orderId, int productId, int quantity);
 
         // Explicit release (payment failure/cancel): INCRBY stock + cleanup.
         Task ReleaseAsync(Guid orderId, int productId, int quantity);
 
         // Reclaim expired reservations (no locking here — the caller coordinates).
-        Task<int> ReclaimExpiredAsync();
+        Task<int> ReclaimExpiredAsync(
+            Func<Guid, Task<ExpiredReservationAction>> resolveActionAsync);
 
         // --- Generic distributed lock (reusable, e.g. sweeper + outbox processor) ---
         Task<string?> AcquireLockAsync(string lockKey, TimeSpan ttl);
@@ -31,6 +37,7 @@
 
         // Force-set the authoritative reconciled value for a product's stock key.
         Task SetStockAsync(int productId, int quantity);
+        Task<bool> SetStockIfUnchangedAsync(int productId, long expectedCurrent, int quantity);
 
         // Product ids that currently have a stock key in Redis (the "hot" set) — via SCAN.
         Task<List<int>> GetTrackedProductIdsAsync();

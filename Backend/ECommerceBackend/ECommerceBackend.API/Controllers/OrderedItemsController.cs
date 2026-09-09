@@ -1,7 +1,7 @@
 ﻿using ECommerceBackend.Application.Interfaces;
+using ECommerceBackend.API.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace ECommerceBackend.API.Controllers
 {
@@ -17,15 +17,9 @@ namespace ECommerceBackend.API.Controllers
 
         [Authorize]
         [HttpGet("get-invoice")]
-        public async Task<IActionResult> GetInvoiceByUserId([FromQuery] Guid userId)
+        public async Task<IActionResult> GetInvoiceByUserId()
         {
-            // Extract userId from JWT claims
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out Guid jwtUserId))
-            {
-                return Unauthorized("You are not authorized to access these invoices.");
-            }
-            var invoices = await _orderedItemService.GetInvoicesByUserIdAsync(jwtUserId);
+            var invoices = await _orderedItemService.GetInvoicesByUserIdAsync(User.GetRequiredUserId());
             if (invoices == null || !invoices.Any())
             {
                 return NotFound("No invoices found for this user.");

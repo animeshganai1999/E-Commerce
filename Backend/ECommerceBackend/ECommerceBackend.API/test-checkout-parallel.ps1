@@ -118,17 +118,13 @@ $results = 1..$UserCount | ForEach-Object -Parallel {
         $addedItems = foreach ($p in $shuffled) {
             @{
                 ProductId   = $p.Id
-                Description = $p.Title
                 Quantity    = $quantity
-                UnitPrice   = $p.Price
-                UserId      = $userId
             }
         }
 
         # --- Add the basket to the cart ---
         $step = "add-to-cart"
         Invoke-Json POST "$baseUrl/api/cart/update" @{
-            UserId  = $userId
             Added   = @($addedItems)
             Updated = @()
             Removed = @()
@@ -140,7 +136,6 @@ $results = 1..$UserCount | ForEach-Object -Parallel {
         $beginHeaders["Idempotency-Key"] = "loadtest-$i-$([guid]::NewGuid())"
         $begin = Invoke-RestMethod -Uri "$baseUrl/api/checkout/begin" -Method Post `
             -Headers $beginHeaders -ContentType "application/json" -Body (@{
-                UserId       = $userId
                 OrderDetails = @{
                     FirstName = "Load"; LastName = "User$i"; Email = $email
                     Address = "123 Main St"; Address2 = ""

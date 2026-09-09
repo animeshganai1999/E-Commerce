@@ -1,5 +1,6 @@
 ﻿using ECommerceBackend.Application.Interfaces;
 using ECommerceBackend.API.Filters;
+using ECommerceBackend.API.Extensions;
 using ECommerceBackend.Application.Exceptions;
 using ECommerceBackend.Application.Models;
 using ECommerceBackend.Application.Services;
@@ -29,7 +30,7 @@ namespace ECommerceBackend.API.Controllers
         {
             try
             {
-                var result = await _checkoutService.BeginCheckoutAsync(model);
+                var result = await _checkoutService.BeginCheckoutAsync(User.GetRequiredUserId(), model);
                 return Ok(result);
             }
             catch (InsufficientStockException ex)
