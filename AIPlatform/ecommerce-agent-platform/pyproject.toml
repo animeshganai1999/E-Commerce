@@ -1,0 +1,36 @@
+[project]
+name = "ecommerce-agent-platform"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "asyncpg>=0.31.0",
+    "azure-identity",
+    "azure-keyvault-secrets",
+    "azure-monitor-opentelemetry",
+    "chainlit",
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "langchain-core>=1.6.2",
+    "langfuse",
+    "langgraph>=1.2.11",
+    "litellm>=1.99.0",
+    "mcp>=2.1.1",
+    "openai>=2.54.0",
+    "opentelemetry-exporter-otlp",
+    "opentelemetry-instrumentation-fastapi",
+    "opentelemetry-instrumentation-httpx",
+    "opentelemetry-sdk",
+    "pgvector>=0.5.0",
+    "pydantic-settings>=2.15.0",
+    "pyjwt[crypto]>=2.13.0",
+    "redis>=8.1.0",
+    "sqlalchemy>=2.0.52",
+    "structlog>=26.1.0",
+    "tenacity>=9.1.4",
+    "uvicorn[standard]>=0.52.4",
+]
+
+[[tool.uv.index]]
+name = "microsoft-package-proxy"
+url = "https://packagefeedproxy.microsoft.io/pypi/simple/"
+default = true

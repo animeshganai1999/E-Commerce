@@ -15,11 +15,42 @@ node_modules
 /.pnp
 .pnp.js
 
+# Python environments and generated files
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.hypothesis/
+**/.tox/
+**/.nox/
+**/.coverage
+**/.coverage.*
+**/htmlcov/
+**/*.egg-info/
+**/.ipynb_checkpoints/
+
+# Python application secrets and local overrides
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local agent runtime artifacts
+AIPlatform/ecommerce-agent-platform/logs/
+AIPlatform/ecommerce-agent-platform/tmp/
+AIPlatform/ecommerce-agent-platform/.cache/
+AIPlatform/ecommerce-agent-platform/*.db
+AIPlatform/ecommerce-agent-platform/*.sqlite
+AIPlatform/ecommerce-agent-platform/*.sqlite3
+
 # testing
 /coverage
 
 # production
 /build
+**/dist/
 
 # misc
 .DS_Store
