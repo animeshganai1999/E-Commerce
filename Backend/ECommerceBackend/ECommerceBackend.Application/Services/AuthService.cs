@@ -5,6 +5,8 @@ using ECommerceBackend.Application.Models;
 using ECommerceBackend.Domain.Entities;
 using ECommerceBackend.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -17,15 +19,32 @@ namespace ECommerceBackend.Application.Services
     {
         private readonly IUserRepository _userRepository;
         private readonly ITokenRepository _tokenRepository;
+        private readonly ILogger<AuthService> _logger;
         private readonly string _issuer;
         private readonly string _audience;
         private readonly string _secret;
         private readonly int _expiryMinutes;
 
-        public AuthService(IUserRepository userRepository, ITokenRepository tokenRepository, IConfiguration configuration)
+        // A shared instance and precomputed hash used only to equalize work when an account is
+        // missing, so response timing does not reveal whether an email is registered.
+        private static readonly User _timingUser = new()
+        {
+            Name = "timing",
+            Email = "timing@invalid",
+            PasswordHash = string.Empty
+        };
+        private static readonly string _timingHash =
+            new PasswordHasher<User>().HashPassword(_timingUser, "timing-equalization-only");
+
+        public AuthService(
+            IUserRepository userRepository,
+            ITokenRepository tokenRepository,
+            IConfiguration configuration,
+            ILogger<AuthService>? logger = null)
         {
             _userRepository = userRepository;
             _tokenRepository = tokenRepository;
+            _logger = logger ?? NullLogger<AuthService>.Instance;
             _issuer = configuration["Jwt:Issuer"]!;
             _audience = configuration["Jwt:Audience"]!;
             _secret = configuration["Jwt:Secret"]!;
@@ -62,10 +81,10 @@ namespace ECommerceBackend.Application.Services
             return Convert.ToBase64String(randomBytes);
         }
 
-        private static bool VerifyPassword(User user, string Password)
+        private static bool VerifyPassword(User user, string passwordHash, string password)
         {
             var passwordHasher = new PasswordHasher<User>();
-            var result = passwordHasher.VerifyHashedPassword(user, user.PasswordHash, Password);
+            var result = passwordHasher.VerifyHashedPassword(user, passwordHash, password);
 
             if (result == PasswordVerificationResult.Failed)
                 return false;
@@ -76,15 +95,31 @@ namespace ECommerceBackend.Application.Services
 
         public async Task<AuthResponse> AuthenticateAsync(LoginModel model, string? userAgent, CancellationToken cancellationToken = default)
         {
+            var normalizedEmail = User.NormalizeEmail(model.Email);
             var existingUser = await _userRepository.GetUserByEmailAsync(model.Email);
-            if (existingUser == null || !VerifyPassword(existingUser, model.Password))
+
+            if (existingUser is null)
+            {
+                // Perform an equivalent hash verification against a dummy hash so a missing
+                // account is indistinguishable (by timing) from a wrong password.
+                VerifyPassword(_timingUser, _timingHash, model.Password);
+                _logger.LogWarning("Login failed for {NormalizedEmail}: no matching account.", normalizedEmail);
                 throw new UnauthorizedAccessException("Invalid credentials");
+            }
+
+            if (!VerifyPassword(existingUser, existingUser.PasswordHash, model.Password))
+            {
+                _logger.LogWarning("Login failed for user {UserId}: invalid password.", existingUser.UserId);
+                throw new UnauthorizedAccessException("Invalid credentials");
+            }
 
             var accessToken = GenerateAccessToken(existingUser);
             var refreshToken = GenerateRefreshToken();
 
             var refreshTokenObj = RefreshTokenFactory.Create(existingUser.UserId, refreshToken, DateTime.UtcNow.AddDays(7), userAgent);
             await _tokenRepository.AddAsync(refreshTokenObj, cancellationToken);
+
+            _logger.LogInformation("Login succeeded for user {UserId}.", existingUser.UserId);
 
             return new AuthResponse
             {
@@ -95,16 +130,24 @@ namespace ECommerceBackend.Application.Services
         }
         public async Task<AuthResponse> RegisterAsync(RegisterModel model, string? userAgent, CancellationToken cancellationToken = default)
         {
+            var normalizedEmail = User.NormalizeEmail(model.Email);
             var existingUser = await _userRepository.GetUserByEmailAsync(model.Email);
             if (existingUser != null)
-                throw new ArgumentException("User already exists");
+            {
+                // Do not confirm that the email is taken. Equalize timing with the create path
+                // (which hashes a password) and return a generic error instead.
+                new PasswordHasher<User>().HashPassword(_timingUser, model.Password);
+                _logger.LogWarning("Registration blocked for {NormalizedEmail}: email already registered.", normalizedEmail);
+                throw new ArgumentException("Registration could not be completed. Please check your details and try again.");
+            }
 
             // Ensure all required properties of the User object are set
             var user = new User
             {
                 UserId = Guid.NewGuid(), // Generate a new GUID for the UserId
                 Name = model.Name,
-                Email = model.Email,
+                Email = model.Email.Trim(),
+                NormalizedEmail = normalizedEmail,
                 PasswordHash = string.Empty // Initialize PasswordHash to satisfy the required property
             };
 
@@ -120,7 +163,8 @@ namespace ECommerceBackend.Application.Services
             var refreshTokenObj = RefreshTokenFactory.Create(user.UserId, refreshToken, DateTime.UtcNow.AddDays(7), userAgent);
             await _tokenRepository.AddAsync(refreshTokenObj, cancellationToken);
 
-            
+            _logger.LogInformation("Registration succeeded for user {UserId}.", user.UserId);
+
             return new AuthResponse
             {
                 AccessToken = accessToken,

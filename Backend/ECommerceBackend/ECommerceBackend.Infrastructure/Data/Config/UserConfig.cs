@@ -19,6 +19,16 @@ namespace ECommerceBackend.Infrastructure.Data.Config
             builder.Property(u => u.Email).IsRequired();
             builder.Property(u => u.PasswordHash).IsRequired();
 
+            // Normalized email backs a unique index so duplicate accounts (differing only by
+            // case or surrounding whitespace) are rejected at the database level.
+            builder.Property(u => u.NormalizedEmail)
+                .IsRequired()
+                .HasMaxLength(256);
+
+            builder.HasIndex(u => u.NormalizedEmail)
+                .IsUnique()
+                .HasDatabaseName("IX_Users_NormalizedEmail");
+
             // Role is required and short. The SQL default backfills existing rows as Customer
             // when this column is added, so no user is left without a role.
             builder.Property(u => u.Role)

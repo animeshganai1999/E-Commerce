@@ -11,10 +11,12 @@ namespace ECommerceBackend.Infrastructure.Repositories
             _context = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         }
 
-        // This method retrieves a user by their email address.
+        // Retrieves a user by email, matching on the normalized form so lookups are
+        // case- and whitespace-insensitive.
         public async Task<User?> GetUserByEmailAsync(string email)
         {
-            return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+            var normalized = User.NormalizeEmail(email);
+            return await _context.Users.FirstOrDefaultAsync(u => u.NormalizedEmail == normalized);
         }
         public async Task<User?> GetUserByUserIdAsync(Guid? userId)
         {

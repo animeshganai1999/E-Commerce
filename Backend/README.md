@@ -370,6 +370,33 @@ UPDATE Users SET Role = 'Admin' WHERE Email = 'you@example.com';
 Migration `20260922155931_AddUserRole` adds the column and backfills existing rows as
 `Customer`.
 
+### Account and email hardening
+
+Emails are stored in two forms: `Email` (the trimmed value the user typed, for display) and
+`NormalizedEmail` (`Trim().ToUpperInvariant()`, following the ASP.NET Identity convention). A
+**unique index** on `NormalizedEmail` (`IX_Users_NormalizedEmail`) makes registration reject
+duplicate accounts that differ only by case or surrounding whitespace, and every account
+lookup queries `NormalizedEmail`, so login is case-insensitive.
+
+The endpoints avoid confirming whether an account exists:
+
+- Login returns the same generic `401 Invalid credentials` for an unknown email and a wrong
+  password. When the account is missing, a dummy password verification still runs so response
+  timing does not distinguish the two cases.
+- Registration of an already-registered email returns a generic `400` (it never states the
+  email is taken) and performs an equivalent password hash so timing matches the create path.
+  > Because registration auto-issues tokens on success, a `400`-vs-`200` oracle still exists;
+  > fully removing it would require an email-verification flow, which is out of scope here.
+
+`AuthService` emits audit logs for register/login success and failure (user id or normalized
+email, plus outcome) and never logs passwords or tokens.
+
+Password-strength validation and login throttling are handled at the Azure API gateway, not
+in the application.
+
+Migration `20260922163620_AddUserNormalizedEmail` adds the column, backfills existing rows as
+`UPPER(LTRIM(RTRIM(Email)))`, then creates the unique index.
+
 ### Authentication verification
 
 From `Backend\ECommerceBackend`:

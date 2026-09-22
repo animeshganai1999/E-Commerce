@@ -147,6 +147,7 @@ internal static class AuthTests
             UserId = Guid.NewGuid(),
             Name = "Admin",
             Email = "role-admin@example.invalid",
+            NormalizedEmail = User.NormalizeEmail("role-admin@example.invalid"),
             PasswordHash = string.Empty,
             Role = UserRoles.Admin
         };
@@ -159,6 +160,49 @@ internal static class AuthTests
         }, null);
         Check(Principal(login.AccessToken, config).IsInRole(UserRoles.Admin),
             "The access token must carry the persisted Admin role.");
+    }
+
+    public static async Task NormalizesEmailAndHidesAccountExistenceAsync()
+    {
+        var config = Configuration();
+        var users = new StubUserRepository();
+        var service = new AuthService(users, new StubTokenRepository(), config);
+
+        // Registration must persist a trimmed display email and an upper-cased normalized email.
+        await service.RegisterAsync(new RegisterModel
+        {
+            Email = "  Mixed@Case.invalid  ",
+            Name = "Casing",
+            Password = "Test password only!"
+        }, "test-agent");
+        Check(users.User!.Email == "Mixed@Case.invalid", "Registration must store the trimmed email.");
+        Check(users.User!.NormalizedEmail == "MIXED@CASE.INVALID", "Registration must store the normalized email.");
+
+        // Login must be case- and whitespace-insensitive via the normalized email.
+        var login = await service.AuthenticateAsync(new LoginModel
+        {
+            Email = " mixed@CASE.invalid ",
+            Password = "Test password only!"
+        }, null);
+        Check(!string.IsNullOrEmpty(login.AccessToken), "Login must succeed regardless of email casing.");
+
+        // A duplicate registration must not confirm that the account exists.
+        var duplicate = await ThrowsAsync<ArgumentException>(() => service.RegisterAsync(new RegisterModel
+        {
+            Email = "MIXED@case.invalid",
+            Name = "Casing",
+            Password = "Another password!"
+        }, "test-agent"));
+        Check(!duplicate.Message.Contains("exist", StringComparison.OrdinalIgnoreCase),
+            "A duplicate registration must not reveal that the account exists.");
+        Check(!duplicate.Message.Contains("mixed@case.invalid", StringComparison.OrdinalIgnoreCase),
+            "A duplicate registration must not echo the email.");
+
+        // An unknown account must fail identically to a wrong password.
+        var unknown = await ThrowsAsync<UnauthorizedAccessException>(() => service.AuthenticateAsync(
+            new LoginModel { Email = "nobody@nowhere.invalid", Password = "whatever" }, null));
+        Check(unknown.Message == "Invalid credentials",
+            "An unknown account must return the same generic error as a wrong password.");
     }
 
     // Validate a token exactly as the API does, so IsInRole mirrors [Authorize(Roles = ...)].
@@ -205,15 +249,15 @@ internal static class AuthTests
             throw new InvalidOperationException(message);
     }
 
-    internal static async Task ThrowsAsync<T>(Func<Task> action) where T : Exception
+    internal static async Task<T> ThrowsAsync<T>(Func<Task> action) where T : Exception
     {
         try
         {
             await action();
         }
-        catch (T)
+        catch (T ex)
         {
-            return;
+            return ex;
         }
         throw new InvalidOperationException($"Expected {typeof(T).Name}.");
     }
@@ -253,7 +297,7 @@ internal static class AuthTests
     {
         public User? User { get; set; }
         public Task<User?> GetUserByEmailAsync(string email) =>
-            Task.FromResult(User?.Email == email ? User : null);
+            Task.FromResult(User is not null && User.NormalizedEmail == User.NormalizeEmail(email) ? User : null);
         public Task<User?> GetUserByUserIdAsync(Guid? userId) =>
             Task.FromResult(User?.UserId == userId ? User : null);
         public Task AddAsync(User user) { User = user; return Task.CompletedTask; }

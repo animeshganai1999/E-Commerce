@@ -15,7 +15,12 @@ namespace ECommerceBackend.Domain.Entities
 
         [Required]
         [EmailAddress]
-        public required string Email { get; set; } // Email should be unique (add uniqueness in DB config)
+        public required string Email { get; set; } // Display form; uniqueness is enforced on NormalizedEmail
+
+        // Case- and whitespace-insensitive form of Email. A unique index on this column prevents
+        // duplicate accounts, and lookups query it so logins are case-insensitive.
+        [Required]
+        public string NormalizedEmail { get; set; } = string.Empty;
 
         [Required]
         public required string PasswordHash { get; set; }
@@ -24,5 +29,10 @@ namespace ECommerceBackend.Domain.Entities
         // Promote a user to Admin out-of-band (e.g. a DBA UPDATE) — never via a public endpoint.
         [Required]
         public string Role { get; set; } = UserRoles.Customer;
+
+        // Canonical email form used for storage comparisons and lookups.
+        // Follows the ASP.NET Identity convention (trim + invariant upper-case).
+        public static string NormalizeEmail(string? email) =>
+            (email ?? string.Empty).Trim().ToUpperInvariant();
     }
 }

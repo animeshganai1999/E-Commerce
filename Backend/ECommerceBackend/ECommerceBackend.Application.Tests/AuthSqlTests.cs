@@ -67,8 +67,8 @@ internal static class AuthSqlTests
         var id2 = Guid.NewGuid();
         var raw = RawToken();
         await database.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO [Users] ([UserId], [Name], [Email], [PasswordHash])
-            VALUES ({userId}, 'Migration test', 'migration@example.invalid', 'unused');
+            INSERT INTO [Users] ([UserId], [Name], [Email], [NormalizedEmail], [PasswordHash])
+            VALUES ({userId}, 'Migration test', 'migration@example.invalid', 'MIGRATION@EXAMPLE.INVALID', 'unused');
             INSERT INTO [RefreshTokens] ([Id], [UserId], [Token], [ExpiryDate], [IsRevoked], [CreatedAt])
             VALUES ({id1}, {userId}, {raw}, DATEADD(day, 7, SYSUTCDATETIME()), 0, SYSUTCDATETIME()),
                    ({id2}, {userId}, {raw}, DATEADD(day, 7, SYSUTCDATETIME()), 0, SYSUTCDATETIME());
@@ -301,10 +301,11 @@ internal static class AuthSqlTests
     private static async Task<Guid> CreateUserAsync(DbContextOptions<AppDbContext> options)
     {
         await using var context = new AppDbContext(options);
+        var email = $"{Guid.NewGuid():N}@example.invalid";
         var user = new User
         {
             UserId = Guid.NewGuid(), Name = "SQL test",
-            Email = $"{Guid.NewGuid():N}@example.invalid", PasswordHash = "unused"
+            Email = email, NormalizedEmail = User.NormalizeEmail(email), PasswordHash = "unused"
         };
         context.Users.Add(user);
         await context.SaveChangesAsync();

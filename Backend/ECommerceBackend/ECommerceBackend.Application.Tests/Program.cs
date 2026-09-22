@@ -57,6 +57,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("Server errors are not cached", ServerErrorsAreNotCached),
     ("Login and registration persist only token hashes", AuthTests.IssuanceStoresHashesAsync),
     ("Access tokens carry the persisted user role", AuthTests.AccessTokenCarriesRoleAsync),
+    ("Email is normalized and account existence is not disclosed", AuthTests.NormalizesEmailAndHidesAccountExistenceAsync),
     ("Refresh persists the replacement hash and rejects invalid tokens", AuthTests.RotationContractAsync),
     ("Cookie authentication checks trusted origins and clears logout cookies", AuthTests.CookieContractAsync)
 };
