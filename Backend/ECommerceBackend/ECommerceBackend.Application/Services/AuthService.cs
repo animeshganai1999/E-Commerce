@@ -1,13 +1,10 @@
-﻿using Azure.Core;
-using ECommerceBackend.Application.DTOs;
+﻿using ECommerceBackend.Application.DTOs;
 using ECommerceBackend.Application.Factory;
 using ECommerceBackend.Application.Interfaces;
 using ECommerceBackend.Application.Models;
 using ECommerceBackend.Domain.Entities;
 using ECommerceBackend.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.Identity.Data;
-using Microsoft.Identity.Client;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -76,7 +73,7 @@ namespace ECommerceBackend.Application.Services
         }
 
 
-        public async Task<AuthResponse> AuthenticateAsync(LoginModel model, string userAgent)
+        public async Task<AuthResponse> AuthenticateAsync(LoginModel model, string? userAgent, CancellationToken cancellationToken = default)
         {
             var existingUser = await _userRepository.GetUserByEmailAsync(model.Email);
             if (existingUser == null || !VerifyPassword(existingUser, model.Password))
@@ -85,22 +82,21 @@ namespace ECommerceBackend.Application.Services
             var accessToken = GenerateAccessToken(existingUser);
             var refreshToken = GenerateRefreshToken();
 
-            // Generate Refresh Token object and save it into DB
             var refreshTokenObj = RefreshTokenFactory.Create(existingUser.UserId, refreshToken, DateTime.UtcNow.AddDays(7), userAgent);
-            _tokenRepository.AddAsync(refreshTokenObj).Wait(); // Save the refresh token to the database
+            await _tokenRepository.AddAsync(refreshTokenObj, cancellationToken);
 
-            return await Task.FromResult(new AuthResponse
+            return new AuthResponse
             {
                 AccessToken = accessToken,
                 RefreshToken = refreshToken,
                 UserId = existingUser.UserId
-            });
+            };
         }
-        public async Task<AuthResponse> RegisterAsync(RegisterModel model, string userAgent)
+        public async Task<AuthResponse> RegisterAsync(RegisterModel model, string? userAgent, CancellationToken cancellationToken = default)
         {
             var existingUser = await _userRepository.GetUserByEmailAsync(model.Email);
             if (existingUser != null)
-                throw new Exception("User already exists");
+                throw new ArgumentException("User already exists");
 
             // Ensure all required properties of the User object are set
             var user = new User
@@ -120,9 +116,8 @@ namespace ECommerceBackend.Application.Services
             var accessToken = GenerateAccessToken(user);
             var refreshToken = GenerateRefreshToken();
 
-            // Generate Refresh Token object and save it into DB
             var refreshTokenObj = RefreshTokenFactory.Create(user.UserId, refreshToken, DateTime.UtcNow.AddDays(7), userAgent);
-            _tokenRepository.AddAsync(refreshTokenObj).Wait(); // Save the refresh token to the database
+            await _tokenRepository.AddAsync(refreshTokenObj, cancellationToken);
 
             
             return new AuthResponse
@@ -132,32 +127,48 @@ namespace ECommerceBackend.Application.Services
                 UserId = user.UserId
             };
         }
-        public async Task<AuthResponse> RefreshTokenAsync(string refreshToken, string userAgent)
+        public async Task<AuthResponse> RefreshTokenAsync(string refreshToken, string? userAgent, CancellationToken cancellationToken = default)
         {
-            // Validate the refresh token and generate a new access token
-            Guid? userId = await _tokenRepository.GetUserIdByTokenAsync(refreshToken);
-            if (!userId.HasValue) // Check if the nullable Guid has a value
+            if (!IsValidRefreshTokenFormat(refreshToken))
                 throw new UnauthorizedAccessException("Invalid or expired refresh token");
 
-            // Use userId.Value to safely access the non-nullable Guid
-            User? user = await _userRepository.GetUserByUserIdAsync(userId.Value); // Retrieve the user using the non-nullable Guid
-            if (user == null)
-                throw new UnauthorizedAccessException("User not found");
-
-            var newAccessToken = GenerateAccessToken(user);
             var newRefreshToken = GenerateRefreshToken();
+            var userId = await _tokenRepository.RotateAsync(
+                RefreshTokenFactory.Hash(refreshToken),
+                RefreshTokenFactory.Hash(newRefreshToken),
+                DateTime.UtcNow.AddDays(7),
+                userAgent,
+                cancellationToken);
 
-            // Generate Refresh Token object and save it into DB
-            var refreshTokenObj = RefreshTokenFactory.Create(userId.Value, refreshToken, DateTime.UtcNow.AddDays(7), userAgent);
-            _tokenRepository.AddAsync(refreshTokenObj).Wait(); // Save the refresh token to the database
-            Console.WriteLine("New Refresh token generated");
+            if (!userId.HasValue)
+                throw new UnauthorizedAccessException("Invalid or expired refresh token");
+
+            var user = await _userRepository.GetUserByUserIdAsync(userId.Value);
+            if (user is null)
+                throw new UnauthorizedAccessException("Invalid or expired refresh token");
+
             return new AuthResponse
             {
-                AccessToken = newAccessToken,
+                AccessToken = GenerateAccessToken(user),
                 RefreshToken = newRefreshToken,
                 UserId = user.UserId
             };
         }
 
+        public async Task LogoutAsync(string? refreshToken, CancellationToken cancellationToken = default)
+        {
+            // Logout is idempotent, including when a browser no longer has a session cookie.
+            if (IsValidRefreshTokenFormat(refreshToken))
+                await _tokenRepository.RevokeFamilyAsync(RefreshTokenFactory.Hash(refreshToken!), cancellationToken);
+        }
+
+        private static bool IsValidRefreshTokenFormat(string? token)
+        {
+            if (token is null || token.Length != 88)
+                return false;
+
+            Span<byte> bytes = stackalloc byte[64];
+            return Convert.TryFromBase64String(token, bytes, out var written) && written == bytes.Length;
+        }
     }
 }

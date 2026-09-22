@@ -292,7 +292,8 @@ acts per cycle (multi-instance safe).
 |--------|-------|:----:|-------------|
 | `POST` | `/api/auth/login` | No | Authenticate, issue access + refresh tokens |
 | `POST` | `/api/auth/register` | No | Register a new user |
-| `POST` | `/api/auth/refresh-token` | Cookie | Rotate access token via refresh cookie |
+| `POST` | `/api/auth/refresh-token` | Cookie | Atomically rotate the refresh token and issue a new access token |
+| `POST` | `/api/auth/logout` | Cookie | Revoke the current refresh-token family and clear the cookie (204) |
 | `GET`  | `/api/products` | No | Paged catalog (offset), optional `?category=` |
 | `GET`  | `/api/products/feed` | No | Keyset "Load more" feed (`?afterId=&pageSize=`) |
 | `GET`  | `/api/products/{id}` | No | Single product |
@@ -303,6 +304,69 @@ acts per cycle (multi-instance safe).
 | `POST` | `/api/payment/pay` | Yes | **Step 2** - confirm (success) or release (failure) |
 | `GET`  | `/api/orderedItems/get-invoice` | Yes | Fetch a user's invoices |
 | `GET`  | `/health` | No | SQL + Redis health checks |
+
+---
+
+## Authentication sessions
+
+Login, registration, and refresh retain the `{ AccessToken, UserId }` response shape.
+Refresh tokens are returned only in the `refreshToken` cookie (`HttpOnly`, `Secure`,
+`SameSite=None`, path `/`, seven-day lifetime). SQL stores SHA-256 hashes of random
+64-byte tokens, never their plaintext values, with a unique hash index.
+
+Rotation revokes the used token and inserts its replacement in one SQL transaction.
+Every operation locks the family's root token row, serializing rotation, replay
+detection, and logout even when they act on different descendants. Used tokens and
+the root must be retained until the **entire family** can be deleted.
+
+- Expired, revoked, unknown, or malformed refresh tokens return `401`.
+- Reusing a rotated token revokes its whole family, including when the used token has
+  expired. Other login sessions remain valid.
+- Simultaneous refreshes with the same token allow only one rotation; the losing
+  requests trigger replay detection and revoke that session. Clients must serialize
+  refresh calls, including across tabs, rather than refresh independently per failed request.
+- `POST /api/auth/logout` revokes the cookie's family and expires the cookie. Repeated
+  logout, or logout without a cookie, returns `204`. It does not revoke other sessions.
+- Existing access JWTs remain valid until their normal expiry; logout/replay revocation
+  prevents future refreshes, not use of already-issued access tokens.
+
+All four auth endpoints require an `Origin` header matching the API origin or an entry
+in `Cors:AllowedOrigins` (default: `http://localhost:3000`). Missing, `null`, and untrusted
+origins return `403` before session mutation. This explicitly protects the cross-site
+cookie flow against CSRF; CORS alone is not sufficient. Browsers supply this header
+automatically; API tools/scripts must include a trusted origin. Successful token responses
+and handled refresh rejections use `Cache-Control: no-store`.
+
+**Deployment:** `20260922141212_RotateHashedRefreshTokens` intentionally deletes legacy
+refresh-token rows because their rotation history is unreliable. Users must sign in again.
+Rolling back also deletes refresh sessions because hashes cannot be restored to plaintext.
+Stop old API instances before applying the migration, then deploy the new backend; the
+old token schema is not compatible with the new code. No application database migration
+is run automatically by the regression suite.
+
+Frontend code is unchanged. Its logout UI still needs to call the new endpoint, and its
+refresh interceptor still needs coordinated single-flight refresh to avoid concurrent replay.
+
+### Authentication verification
+
+From `Backend\ECommerceBackend`:
+
+```powershell
+dotnet run --project ECommerceBackend.Application.Tests
+dotnet run --project ECommerceBackend.Application.Tests -- --auth-sql
+```
+
+The SQL variant defaults to Windows SQL Server LocalDB (`MSSQLLocalDB`). For another test
+SQL Server, set `ECOMMERCE_TEST_SQL_CONNECTION`; its database name is always replaced with
+a new `ECommerceAuthTests_<guid>` database, which is deleted afterward. The account needs
+permission to create/drop that isolated database. The suite covers real SQL rotation,
+rollback on failed insertion, eight simultaneous refreshes, logout/replay races, session
+isolation, migration upgrade/downgrade, and the HTTP cookie lifecycle.
+
+**Known migration limitation:** the historical migration chain cannot currently bootstrap
+an empty database because it references `Products` before creating it. The auth SQL suite
+creates the current schema and tests this migration's downgrade/upgrade in isolation; it
+does not claim that the full historical chain works. That pre-existing issue remains separate.
 
 ---
 

@@ -54,8 +54,14 @@ var tests = new (string Name, Func<Task> Run)[]
     ("Failed idempotent requests can retry", FailedIdempotentRequestsCanRetry),
     ("Request representation is fingerprinted", RequestRepresentationIsFingerprinted),
     ("Invalid idempotency keys are rejected", InvalidIdempotencyKeysAreRejected),
-    ("Server errors are not cached", ServerErrorsAreNotCached)
+    ("Server errors are not cached", ServerErrorsAreNotCached),
+    ("Login and registration persist only token hashes", AuthTests.IssuanceStoresHashesAsync),
+    ("Refresh persists the replacement hash and rejects invalid tokens", AuthTests.RotationContractAsync),
+    ("Cookie authentication checks trusted origins and clears logout cookies", AuthTests.CookieContractAsync)
 };
+
+if (args.Contains("--auth-sql"))
+    tests = [.. tests, ("SQL refresh rotation, migration, concurrency and HTTP lifecycle", AuthSqlTests.RunAsync)];
 
 var failures = new List<string>();
 foreach (var test in tests)

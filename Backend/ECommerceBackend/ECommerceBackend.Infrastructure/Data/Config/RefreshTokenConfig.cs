@@ -1,7 +1,6 @@
 ﻿using ECommerceBackend.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Microsoft.Identity.Client;
 
 namespace ECommerceBackend.Infrastructure.Data.Config
 {
@@ -14,8 +13,13 @@ namespace ECommerceBackend.Infrastructure.Data.Config
                 .ValueGeneratedOnAdd(); // Specify that the Id is auto-generated
             builder.Property(ci => ci.UserId)
                 .IsRequired(); // Specify that UserId is required
-            builder.Property(ci => ci.Token)
-                .IsRequired(); // Specify that Token is required
+            builder.Property(ci => ci.TokenHash)
+                .HasMaxLength(64)
+                .IsUnicode(false)
+                .IsRequired();
+            builder.HasIndex(ci => ci.TokenHash).IsUnique();
+            builder.Property(ci => ci.FamilyId).IsRequired();
+            builder.HasIndex(ci => ci.FamilyId);
             builder.Property(ci => ci.ExpiryDate)
                 .IsRequired(); // Specify that ExpiryDate is required
             builder.Property(ci => ci.IsRevoked)
@@ -24,7 +28,9 @@ namespace ECommerceBackend.Infrastructure.Data.Config
                 .IsRequired(); // Specify that CreatedAt is required
             builder.Property(ci => ci.RevokedAt)
                 .IsRequired(false);
-            builder.Property(ci => ci.ReplacedByToken)
+            builder.Property(ci => ci.ReplacedByTokenHash)
+                .HasMaxLength(64)
+                .IsUnicode(false)
                 .IsRequired(false);
             builder.Property(ci => ci.UserAgent)
                 .IsRequired(false); // Specify that UserAgent is optional

@@ -5,14 +5,16 @@ namespace ECommerceBackend.Domain.Entities
     [Table("RefreshTokens")]
     public class RefreshToken
     {
-        public Guid Id { get; set; } // Primary key (GUID)
-        public Guid UserId { get; set; } // Foreign key to the User entity
-        public required string Token { get; set; } // The refresh token string
-        public DateTime ExpiryDate { get; set; } // Expiry date of the refresh token
-        public bool IsRevoked { get; set; } // Indicates if the token has been revoked
-        public DateTime CreatedAt { get; set; } // The date and time when the token was created
-        public DateTime? RevokedAt { get; set; } // The date and time when the token was revoked (nullable)
-        public string? ReplacedByToken { get; set; } // The token that replaced this one (nullable)
-        public string? UserAgent { get; set; } // The user agent string of the client that created the token (nullable)
+        public Guid Id { get; set; }
+        public Guid UserId { get; set; }
+        // The first token's Id identifies the family and its SQL synchronization row.
+        public Guid FamilyId { get; set; }
+        public required string TokenHash { get; set; }
+        public DateTime ExpiryDate { get; set; }
+        public bool IsRevoked { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime? RevokedAt { get; set; }
+        public string? ReplacedByTokenHash { get; set; }
+        public string? UserAgent { get; set; }
     }
 }
