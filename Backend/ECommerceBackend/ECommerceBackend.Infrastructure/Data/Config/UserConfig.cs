@@ -1,4 +1,5 @@
-﻿using ECommerceBackend.Domain.Entities;
+using ECommerceBackend.Domain.Constants;
+using ECommerceBackend.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -17,6 +18,13 @@ namespace ECommerceBackend.Infrastructure.Data.Config
             builder.Property(u => u.Name).IsRequired();
             builder.Property(u => u.Email).IsRequired();
             builder.Property(u => u.PasswordHash).IsRequired();
+
+            // Role is required and short. The SQL default backfills existing rows as Customer
+            // when this column is added, so no user is left without a role.
+            builder.Property(u => u.Role)
+                .IsRequired()
+                .HasMaxLength(20)
+                .HasDefaultValue(UserRoles.Customer);
 
             // Some Seed Data [Need to delete]
             //builder.HasData(new List<User>()

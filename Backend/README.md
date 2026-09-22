@@ -297,7 +297,7 @@ acts per cycle (multi-instance safe).
 | `GET`  | `/api/products` | No | Paged catalog (offset), optional `?category=` |
 | `GET`  | `/api/products/feed` | No | Keyset "Load more" feed (`?afterId=&pageSize=`) |
 | `GET`  | `/api/products/{id}` | No | Single product |
-| `POST` | `/api/products/warmup` | Yes | Pre-warm Redis stock for a sale |
+| `POST` | `/api/products/warmup` | Admin | Pre-warm Redis stock for a sale |
 | `GET`  | `/api/cart/getItems` | Yes | Get the user's cart |
 | `POST` | `/api/cart/update` | Yes | Apply a cart diff (add/update/remove) |
 | `POST` | `/api/checkout/begin` | Yes | **Step 1** - reserve stock + create Pending order (`[Idempotent]`) |
@@ -346,6 +346,29 @@ is run automatically by the regression suite.
 
 Frontend code is unchanged. Its logout UI still needs to call the new endpoint, and its
 refresh interceptor still needs coordinated single-flight refresh to avoid concurrent replay.
+
+### Roles and authorization
+
+Every `User` has a persisted `Role` (`nvarchar(20)`, defaults to `Customer`). The access
+token carries it as a role claim, so `[Authorize(Roles = "Admin")]` and `User.IsInRole(...)`
+are backed by real data rather than an unissued claim. Registration always creates a
+`Customer`; there is deliberately **no** endpoint that grants `Admin`.
+
+Admin-gated operations:
+
+- `POST /api/products/warmup` — `[Authorize(Roles = "Admin")]`; non-admins get `403`.
+- `POST /api/dev/reset-stock` — Development-only. The environment gate runs first (returns
+  `404` in production so the endpoint stays hidden), then an `Admin` role check (`403` otherwise).
+
+Promote a user to `Admin` out-of-band (e.g. via a DBA query); the change takes effect on
+their next login, when a fresh access token is issued:
+
+```sql
+UPDATE Users SET Role = 'Admin' WHERE Email = 'you@example.com';
+```
+
+Migration `20260922155931_AddUserRole` adds the column and backfills existing rows as
+`Customer`.
 
 ### Authentication verification
 

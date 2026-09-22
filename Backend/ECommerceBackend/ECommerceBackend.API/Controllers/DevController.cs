@@ -1,4 +1,5 @@
 using ECommerceBackend.Application.Interfaces;
+using ECommerceBackend.Domain.Constants;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ECommerceBackend.API.Controllers
@@ -26,6 +27,11 @@ namespace ECommerceBackend.API.Controllers
         {
             if (!_env.IsDevelopment())
                 return NotFound(); // hide the endpoint entirely outside Development
+
+            // Even in Development, require an Admin. The check runs after the env gate so the
+            // endpoint stays invisible (404) in production instead of leaking a 401/403.
+            if (!User.IsInRole(UserRoles.Admin))
+                return Forbid();
 
             var count = await _productService.ResetStockAsync();
             return Ok(new { message = "Redis flushed and stock re-seeded from SQL.", productsWarmed = count });

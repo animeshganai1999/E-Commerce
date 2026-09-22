@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using ECommerceBackend.Domain.Constants;
 
 namespace ECommerceBackend.Domain.Entities
 {
@@ -18,5 +19,10 @@ namespace ECommerceBackend.Domain.Entities
 
         [Required]
         public required string PasswordHash { get; set; }
+
+        // Authorization role. Defaults to Customer; drives the role claim in the access token.
+        // Promote a user to Admin out-of-band (e.g. a DBA UPDATE) — never via a public endpoint.
+        [Required]
+        public string Role { get; set; } = UserRoles.Customer;
     }
 }

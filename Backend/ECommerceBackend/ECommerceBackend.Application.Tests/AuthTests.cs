@@ -1,5 +1,8 @@
 using System.Linq.Expressions;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text;
 using ECommerceBackend.API.Controllers;
 using ECommerceBackend.Application.DTOs;
 using ECommerceBackend.Application.Exceptions;
@@ -7,13 +10,16 @@ using ECommerceBackend.Application.Factory;
 using ECommerceBackend.Application.Interfaces;
 using ECommerceBackend.Application.Models;
 using ECommerceBackend.Application.Services;
+using ECommerceBackend.Domain.Constants;
 using ECommerceBackend.Domain.Entities;
 using ECommerceBackend.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.IdentityModel.Tokens;
 
 internal static class AuthTests
 {
@@ -114,6 +120,61 @@ internal static class AuthTests
         var logout = Controller(service, "https://localhost:7244");
         Check(await logout.Logout() is NoContentResult, "Logout without a cookie is idempotent.");
         Check(logout.Response.Headers.SetCookie.ToString().Contains("expires="), "Logout must clear the cookie.");
+    }
+
+    public static async Task AccessTokenCarriesRoleAsync()
+    {
+        var config = Configuration();
+
+        // Registration must issue a Customer-scoped access token and persist that role.
+        var users = new StubUserRepository();
+        var service = new AuthService(users, new StubTokenRepository(), config);
+        var registered = await service.RegisterAsync(new RegisterModel
+        {
+            Email = "role-customer@example.invalid",
+            Name = "Role customer",
+            Password = "Test password only!"
+        }, "test-agent");
+        Check(users.User!.Role == UserRoles.Customer, "A registered user must be persisted as a Customer.");
+        Check(Principal(registered.AccessToken, config).IsInRole(UserRoles.Customer),
+            "A new registration's token must authorize as Customer.");
+        Check(!Principal(registered.AccessToken, config).IsInRole(UserRoles.Admin),
+            "A Customer token must never satisfy an Admin requirement.");
+
+        // Login must reflect the persisted role, so a promoted Admin gets an Admin token.
+        var admin = new User
+        {
+            UserId = Guid.NewGuid(),
+            Name = "Admin",
+            Email = "role-admin@example.invalid",
+            PasswordHash = string.Empty,
+            Role = UserRoles.Admin
+        };
+        admin.PasswordHash = new PasswordHasher<User>().HashPassword(admin, "Admin password only!");
+        var adminService = new AuthService(new StubUserRepository { User = admin }, new StubTokenRepository(), config);
+        var login = await adminService.AuthenticateAsync(new LoginModel
+        {
+            Email = admin.Email,
+            Password = "Admin password only!"
+        }, null);
+        Check(Principal(login.AccessToken, config).IsInRole(UserRoles.Admin),
+            "The access token must carry the persisted Admin role.");
+    }
+
+    // Validate a token exactly as the API does, so IsInRole mirrors [Authorize(Roles = ...)].
+    private static ClaimsPrincipal Principal(string accessToken, IConfiguration config)
+    {
+        var parameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = config["Jwt:Issuer"],
+            ValidAudience = config["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["Jwt:Secret"]!))
+        };
+        return new JwtSecurityTokenHandler().ValidateToken(accessToken, parameters, out _);
     }
 
     private static AuthController Controller(IAuthService service, string? origin)

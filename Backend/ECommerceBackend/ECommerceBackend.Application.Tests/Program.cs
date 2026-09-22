@@ -56,6 +56,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("Invalid idempotency keys are rejected", InvalidIdempotencyKeysAreRejected),
     ("Server errors are not cached", ServerErrorsAreNotCached),
     ("Login and registration persist only token hashes", AuthTests.IssuanceStoresHashesAsync),
+    ("Access tokens carry the persisted user role", AuthTests.AccessTokenCarriesRoleAsync),
     ("Refresh persists the replacement hash and rejects invalid tokens", AuthTests.RotationContractAsync),
     ("Cookie authentication checks trusted origins and clears logout cookies", AuthTests.CookieContractAsync)
 };

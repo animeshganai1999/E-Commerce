@@ -1,6 +1,7 @@
 using AutoMapper;
 using ECommerceBackend.Application.DTOs;
 using ECommerceBackend.Application.Interfaces;
+using ECommerceBackend.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -19,7 +20,7 @@ namespace ECommerceBackend.API.Controllers
             _mapper = mapper;
         }
 
-        // Public catalog endpoint — returns a page of products with live stock from our own DB.
+        // Public catalog endpoint ï¿½ returns a page of products with live stock from our own DB.
         // Optionally filtered by category (server-side, so it scales to lakhs of products).
         [HttpGet]
         public async Task<IActionResult> GetAll(
@@ -39,7 +40,7 @@ namespace ECommerceBackend.API.Controllers
             return Ok(response);
         }
 
-        // "Load more" catalog endpoint — keyset (seek) pagination. Pass the "afterId" returned
+        // "Load more" catalog endpoint ï¿½ keyset (seek) pagination. Pass the "afterId" returned
         // as "nextCursor" from the previous call to fetch the next batch. Performance stays
         // constant regardless of depth (unlike OFFSET-based paging).
         [HttpGet("feed")]
@@ -71,7 +72,7 @@ namespace ECommerceBackend.API.Controllers
             return Ok(response);
         }
 
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = UserRoles.Admin)]
         [HttpPost("warmup")]
         public async Task<IActionResult> WarmUp([FromBody] int[] productIds)
         {
